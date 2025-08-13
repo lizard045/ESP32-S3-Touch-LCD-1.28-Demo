@@ -57,11 +57,17 @@ public:
     void startGame(int currentPlayerId, int targetPlayerId);
     void initializeHiddenTraits();
     String getVisibleTraits(int playerId);
+    String getSingleTrait(int playerId, int traitIndex);  // 新增：獲取單個特徵
     String getTraitName(int traitIndex);
     String getTraitValue(const PartnerInfo& player, int traitIndex);
     bool checkMatch(int playerId1, int playerId2);
     void processWrongMatch();
     void revealRandomTrait();
+    
+    // 解鎖特徵相關
+    int getUnlockedTraitCount();
+    int getTotalTraitCount() { return 10; }
+    bool isTraitUnlocked(int traitIndex);  // 新增：檢查特徵是否解鎖
     
     // 遊戲狀態
     GameState& getGameState();

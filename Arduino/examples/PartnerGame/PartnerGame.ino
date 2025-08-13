@@ -1,91 +1,67 @@
 /*
  * 派對交流遊戲 - ESP32-S3 圓形LCD版本
+ * 參照 LVGL_Arduino.ino 結構設計
  * 
- * 硬體需求:
- * - ESP32-S3 Touch LCD 1.28" 圓形螢幕
- * - CST816S 電容觸控
- * - 5mm 紅外線發射器 (GPIO15)
- * - VS1838B 紅外線接收器 (GPIO16)  
- * - 狀態指示LED (GPIO17)
- * - 3.7V 1200mAh 鋰電池
- * 
- * 遊戲流程:
- * 1. 載入CSV玩家資料
- * 2. 顯示部分特徵資訊 (隱藏5個)
- * 3. 透過紅外線與其他玩家配對
- * 4. 配對錯誤時揭露隱藏特徵
- * 5. 最多錯3次，成功則顯示MATCH!
+ * 功能:
+ * - 初始顯示前5個特徵 (Partner, Pet, Bad Habit, E/I, N/S)
+ * - 左上角顯示解鎖進度 CR : (5/10)
+ * - 觸控切換特徵，感應失敗時解鎖新特徵
  */
 
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 #include "lv_conf.h"
 #include "CST816S.h"
-#include <esp_timer.h>
 
 // 自定義程式庫
 #include "PartnerData.h"
-#include "DisplayManager.h"
-#include "IRCommunication.h"
-#include "Config.h"
 
-// 硬體設定
-#define SCREEN_WIDTH  240
-#define SCREEN_HEIGHT 240
-#define TOUCH_SDA     6
-#define TOUCH_SCL     7
-#define TOUCH_RST     13
-#define TOUCH_IRQ     5
-
-#define IR_SEND_PIN   15
-#define IR_RECV_PIN   16
-#define IR_LED_PIN    17
-
-#define BATTERY_PIN   33  // 電池電壓監測
-
-// LVGL計時器設定
 #define LVGL_TICK_PERIOD_MS 2
+
+// 螢幕解析度
+static const uint16_t screenWidth  = 240;
+static const uint16_t screenHeight = 240;
+
+// LVGL 緩衝區
+static lv_disp_draw_buf_t draw_buf;
+static lv_color_t buf[screenWidth * screenHeight / 10];
+
+// 硬體物件
+TFT_eSPI tft = TFT_eSPI(screenWidth, screenHeight);
+CST816S touch(6, 7, 13, 5);  // sda, scl, rst, irq
+
+// 遊戲管理器
+PartnerDataManager dataManager;
 
 // 遊戲狀態
 enum GamePhase {
-    PHASE_INIT,        // 初始化
-    PHASE_LOADING,     // 載入資料
-    PHASE_MENU,        // 主選單
-    PHASE_GAME_START,  // 遊戲開始
     PHASE_DISPLAYING,  // 顯示特徵
-    PHASE_SCANNING,    // 掃描其他玩家
-    PHASE_MATCHING,    // 配對中
-    PHASE_RESULT,      // 結果顯示
-    PHASE_ERROR        // 錯誤處理
+    PHASE_SCANNING,    // 掃描配對
+    PHASE_RESULT       // 結果顯示
 };
 
-// 全域物件
-TFT_eSPI tft = TFT_eSPI(SCREEN_WIDTH, SCREEN_HEIGHT);
-CST816S touch(TOUCH_SDA, TOUCH_SCL, TOUCH_RST, TOUCH_IRQ);
+static GamePhase currentPhase = PHASE_DISPLAYING;
+static int currentPlayerId = 0;
+static int currentTraitIndex = 0;  // 當前顯示的特徵索引
+static unsigned long lastUpdate = 0;
 
-// LVGL相關
-static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf[SCREEN_WIDTH * SCREEN_HEIGHT / 10];
-esp_timer_handle_t lvgl_tick_timer = NULL;
+// LVGL 物件
+static lv_obj_t* mainLabel = nullptr;
+static lv_obj_t* statusLabel = nullptr;
 
-// 移除不需要的複雜物件和變數
+// 測試CSV資料
+const String testCSV = 
+    "時間戳記,Partner,Pet,Bad habit,MBTI(E/I),MBTI(N/S),MBTI(T/F),MBTI(J/P),Gender,Height,Accessories\n"
+    "2025/8/13 下午 5:36:35,Single,Don't have,Smoker,Introversion(I),Intuition(N),Thinking(T),Judging(J),Male,<=170cm,Wear glasses\n"
+    "2025/8/13 下午 5:39:31,Single,Don't have,Not,Introversion(I),Intuition(N),Thinking(T),Perceiving(P),Male,<=170cm,Wear glasses\n";
 
-// 計時器句柄 (已在上面定義)
-
-// 移除不需要的CSV測試資料
-
-// 函數宣告 (極簡版本，大部分已移除)
-void lvglTickCallback(void* arg);
-void my_disp_flush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p);
-void my_touchpad_read(lv_indev_drv_t* indev_drv, lv_indev_data_t* data);
-
-// LVGL計時器回調
-void lvglTickCallback(void* arg) {
+// LVGL 計時器回調
+void lvgl_tick_callback(void *arg) {
     lv_tick_inc(LVGL_TICK_PERIOD_MS);
 }
 
-// LVGL顯示回調
-void my_disp_flush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p) {
+// 顯示刷新回調
+void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) {
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
 
@@ -97,9 +73,10 @@ void my_disp_flush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* c
     lv_disp_flush_ready(disp_drv);
 }
 
-// LVGL觸控回調
-void my_touchpad_read(lv_indev_drv_t* indev_drv, lv_indev_data_t* data) {
+// 觸控讀取回調
+void my_touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
     bool touched = touch.available();
+    
     if (!touched) {
         data->state = LV_INDEV_STATE_REL;
     } else {
@@ -109,87 +86,256 @@ void my_touchpad_read(lv_indev_drv_t* indev_drv, lv_indev_data_t* data) {
     }
 }
 
-// 全域變數
-lv_obj_t* label_main;
-int current_trait = 0;
-String traits[10] = {
-    "Partner: Single",
-    "Pet: Don't have", 
-    "Bad Habit: Not",
-    "E/I: Introversion(I)",
-    "N/S: Intuition(N)",
-    "T/F: Thinking(T)",
-    "J/P: Perceiving(P)",
-    "Gender: Male",
-    "Height: <=170cm",
-    "Accessories: Wear glasses"
-};
+// 更新顯示內容
+void updateDisplay() {
+    static String lastContent = "";
+    static String lastStatus = "";
+    static int lastTraitIndex = -1;
+    
+    // 顯示單個特徵
+    String content = dataManager.getSingleTrait(currentPlayerId, currentTraitIndex);
+    
+    // 添加特徵導航提示
+    // String navigationInfo = "(" + String(currentTraitIndex + 1) + "/10)\n\nSwipe to navigate";
+    // content = content + "\n\n" + navigationInfo;
+    
+    // 只有內容改變時才更新
+    if (content != lastContent || currentTraitIndex != lastTraitIndex) {
+        if (mainLabel) {
+            lv_label_set_text(mainLabel, content.c_str());
+            lastContent = content;
+            lastTraitIndex = currentTraitIndex;
+        }
+    }
+    
+    // 更新狀態 - CR計數器
+    int unlocked = dataManager.getUnlockedTraitCount();
+    int total = dataManager.getTotalTraitCount();
+    String status = "CR : (" + String(unlocked) + "/" + String(total) + ")";
+    
+    if (status != lastStatus) {
+        if (statusLabel) {
+            lv_label_set_text(statusLabel, status.c_str());
+            lastStatus = status;
+        }
+    }
+}
+
+// 處理滑動切換特徵
+void handleSwipe() {
+    static unsigned long lastSwipeTime = 0;
+    unsigned long now = millis();
+    
+    // 防抖動
+    if (now - lastSwipeTime < 200) return;
+    lastSwipeTime = now;
+    
+    // 獲取手勢ID
+    byte gestureID = touch.data.gestureID;
+    
+    if (currentPhase == PHASE_DISPLAYING) {
+        switch (gestureID) {
+            case SWIPE_LEFT:
+                // 向左滑動 - 下一個特徵
+                currentTraitIndex = (currentTraitIndex + 1) % 10;
+                Serial.print("Swipe left - trait ");
+                Serial.println(currentTraitIndex);
+                break;
+                
+            case SWIPE_RIGHT:
+                // 向右滑動 - 上一個特徵
+                currentTraitIndex = (currentTraitIndex - 1 + 10) % 10;
+                Serial.print("Swipe right - trait ");
+                Serial.println(currentTraitIndex);
+                break;
+                
+            case SINGLE_CLICK:
+                // 單擊進入掃描模式
+                Serial.println("Enter scanning mode");
+                currentPhase = PHASE_SCANNING;
+                if (mainLabel) {
+                    lv_label_set_text(mainLabel, "SCANNING...\n\nTap again to match");
+                }
+                break;
+        }
+    }
+}
+
+// 處理觸控事件
+void handleTouch() {
+    static unsigned long lastTouchTime = 0;
+    unsigned long now = millis();
+    
+    // 防抖動
+    if (now - lastTouchTime < 300) return;
+    lastTouchTime = now;
+    
+    switch (currentPhase) {
+        case PHASE_SCANNING: {
+            Serial.println("Simulate pairing check");
+            bool matchResult = random(0, 2);
+            
+            if (matchResult) {
+                Serial.println("Match successful!");
+                currentPhase = PHASE_RESULT;
+                if (mainLabel) {
+                    lv_label_set_text(mainLabel, "MATCH!\n\nCongratulations!");
+                }
+                lastUpdate = now;
+            } else {
+                Serial.println("Match failed, unlock new trait");
+                dataManager.processWrongMatch();
+                
+                if (dataManager.isGameOver()) {
+                    currentPhase = PHASE_RESULT;
+                    if (mainLabel) {
+                        lv_label_set_text(mainLabel, "GAME OVER\n\nTry Again!");
+                    }
+                    lastUpdate = now;
+                } else {
+                    currentPhase = PHASE_DISPLAYING;
+                    // 強制更新顯示，因為解鎖了新特徵
+                    updateDisplay();
+                    
+                    Serial.print("New unlocked traits: ");
+                    Serial.print(dataManager.getUnlockedTraitCount());
+                    Serial.print("/");
+                    Serial.println(dataManager.getTotalTraitCount());
+                }
+            }
+            break;
+        }
+            
+        case PHASE_RESULT:
+            Serial.println("Restart game");
+            dataManager.resetGame();
+            dataManager.startGame(currentPlayerId, currentPlayerId);
+            currentPhase = PHASE_DISPLAYING;
+            currentTraitIndex = 0;  // 重置到第一個特徵
+            updateDisplay();
+            break;
+            
+        default:
+            break;
+    }
+}
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("=== 簡化特徵查看程式 ===");
+    Serial.println("=== Party Match Game Start ===");
     
-    // 初始化TFT螢幕
+    // 初始化 LVGL
+    lv_init();
+    
+    // 初始化 TFT
     tft.begin();
     tft.setRotation(0);
     
     // 初始化觸控
     touch.begin();
     
-    // 初始化LVGL (參考LVGL_Arduino範例)
-    lv_init();
-    lv_disp_draw_buf_init(&draw_buf, buf, NULL, SCREEN_WIDTH * SCREEN_HEIGHT / 10);
+    // 初始化 LVGL 顯示緩衝區
+    lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * screenHeight / 10);
     
-    // 設置顯示驅動
+    // 註冊顯示驅動
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
-    disp_drv.hor_res = SCREEN_WIDTH;
-    disp_drv.ver_res = SCREEN_HEIGHT;
+    disp_drv.hor_res = screenWidth;
+    disp_drv.ver_res = screenHeight;
     disp_drv.flush_cb = my_disp_flush;
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);
     
-    // 設置觸控驅動
+    // 註冊觸控驅動
     static lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = my_touchpad_read;
     lv_indev_drv_register(&indev_drv);
     
-    // 創建LVGL計時器
+    // 創建 LVGL 計時器
     const esp_timer_create_args_t lvgl_tick_timer_args = {
-        .callback = &lvglTickCallback,
+        .callback = &lvgl_tick_callback,
         .name = "lvgl_tick"
     };
+    
+    esp_timer_handle_t lvgl_tick_timer = NULL;
     esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer);
-    esp_timer_start_periodic(lvgl_tick_timer, 2 * 1000);
+    esp_timer_start_periodic(lvgl_tick_timer, LVGL_TICK_PERIOD_MS * 1000);
     
-    // 創建主標籤
-    label_main = lv_label_create(lv_scr_act());
-    lv_label_set_text(label_main, traits[current_trait].c_str());
-    lv_obj_set_style_text_align(label_main, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(label_main, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_long_mode(label_main, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(label_main, SCREEN_WIDTH - 20);
+    // 載入測試資料
+    if (!dataManager.loadFromCSV(testCSV)) {
+        Serial.println("ERROR: CSV data loading failed");
+        return;
+    }
     
-    Serial.println("✅ 初始化完成，觸控切換特徵");
+    Serial.print("Loaded players: ");
+    Serial.println(dataManager.getPlayerCount());
+    
+    // 開始遊戲
+    dataManager.startGame(0, 0);
+    
+    // 創建 UI 元素
+    // CR計數器在上方置中
+    statusLabel = lv_label_create(lv_scr_act());
+    lv_obj_set_width(statusLabel, screenWidth - 20);
+    lv_label_set_long_mode(statusLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_align(statusLabel, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_style_text_align(statusLabel, LV_TEXT_ALIGN_CENTER, 0);
+    
+    // 主要內容置中顯示
+    mainLabel = lv_label_create(lv_scr_act());
+    lv_obj_set_width(mainLabel, screenWidth - 20);
+    lv_label_set_long_mode(mainLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_align(mainLabel, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_align(mainLabel, LV_TEXT_ALIGN_CENTER, 0);
+    
+    // 初始顯示
+    updateDisplay();
+    
+    Serial.println("Initialization complete");
+    Serial.print("Unlocked traits: ");
+    Serial.print(dataManager.getUnlockedTraitCount());
+    Serial.print("/");
+    Serial.println(dataManager.getTotalTraitCount());
 }
 
 void loop() {
-    lv_timer_handler(); /* let the GUI do its work */
+    static bool lastTouchState = false;
     
-    // 簡單的觸控檢測
-    if (touch.available()) {
-        current_trait = (current_trait + 1) % 10;  // 循環切換特徵
-        lv_label_set_text(label_main, traits[current_trait].c_str());
-        Serial.print("Switched to trait ");
-        Serial.print(current_trait);
-        Serial.print(": ");
-        Serial.println(traits[current_trait]);
-        delay(300);  // 防止重複觸發
+    // 更新 LVGL
+    lv_timer_handler();
+    
+    // 檢查觸控狀態變化
+    bool currentTouchState = touch.available();
+    if (currentTouchState && !lastTouchState) {
+        // 觸控按下 - 先檢查滑動，再處理點擊
+        handleSwipe();
+        
+        // 如果沒有滑動手勢，處理點擊
+        if (touch.data.gestureID == SINGLE_CLICK) {
+            handleTouch();
+        }
+    }
+    lastTouchState = currentTouchState;
+    
+    // 定期更新顯示（只在需要時）
+    static unsigned long lastDisplayUpdate = 0;
+    unsigned long now = millis();
+    if (now - lastDisplayUpdate > 100) {
+        updateDisplay();
+        lastDisplayUpdate = now;
+    }
+    
+    // 結果顯示自動返回
+    if (currentPhase == PHASE_RESULT && (now - lastUpdate > 5000)) {
+        Serial.println("Auto restart game");
+        dataManager.resetGame();
+        dataManager.startGame(currentPlayerId, currentPlayerId);
+        currentPhase = PHASE_DISPLAYING;
+        currentTraitIndex = 0;  // 重置到第一個特徵
+        updateDisplay();
     }
     
     delay(5);
 }
-
-// 極簡版本完成！所有舊函數已移除

@@ -111,18 +111,12 @@ void PartnerDataManager::startGame(int currentPlayerId, int targetPlayerId) {
 }
 
 void PartnerDataManager::initializeHiddenTraits() {
-    // 初始化所有特徵為顯示狀態
+    // 初始化前5個特徵為顯示狀態，後5個為隱藏狀態
     for (int i = 0; i < 10; i++) {
-        gameState.hiddenTraits[i] = false;
-    }
-    
-    // 隨機隱藏5個特徵
-    int hiddenCount = 0;
-    while (hiddenCount < 5) {
-        int randomIndex = random(0, 10);
-        if (!gameState.hiddenTraits[randomIndex]) {
-            gameState.hiddenTraits[randomIndex] = true;
-            hiddenCount++;
+        if (i < 5) {
+            gameState.hiddenTraits[i] = false; // 前5個特徵顯示 (Partner, Pet, Bad Habit, E/I, N/S)
+        } else {
+            gameState.hiddenTraits[i] = true;  // 後5個特徵隱藏 (T/F, J/P, Gender, Height, Accessories)
         }
     }
 }
@@ -133,7 +127,12 @@ String PartnerDataManager::getVisibleTraits(int playerId) {
     }
     
     PartnerInfo player = players[playerId];
-    String result = "Partner Traits:\n\n";
+    
+    // 在左上角顯示解鎖進度
+    int unlockedCount = getUnlockedTraitCount();
+    int totalCount = getTotalTraitCount();
+    String result = "CR : (" + String(unlockedCount) + "/" + String(totalCount) + ")\n\n";
+    result += "Partner Traits:\n\n";
     
     for (int i = 0; i < 10; i++) {
         String traitValue = getTraitValue(player, i);
@@ -141,7 +140,7 @@ String PartnerDataManager::getVisibleTraits(int playerId) {
         result += "\n";
     }
     
-    result += "\nErrors: " + String(gameState.errorCount) + "/" + String(getMaxErrors());
+    // 移除 Errors 顯示
     
     return result;
 }
@@ -214,6 +213,32 @@ void PartnerDataManager::revealRandomTrait() {
         int traitToReveal = hiddenTraits[randomIndex];
         gameState.hiddenTraits[traitToReveal] = false;
     }
+}
+
+String PartnerDataManager::getSingleTrait(int playerId, int traitIndex) {
+    if (playerId < 0 || playerId >= playerCount || traitIndex < 0 || traitIndex >= 10) {
+        return "Invalid";
+    }
+    
+    PartnerInfo player = players[playerId];
+    String traitValue = getTraitValue(player, traitIndex);
+    
+    return formatTraitForDisplay(traitIndex, traitValue, gameState.hiddenTraits[traitIndex]);
+}
+
+bool PartnerDataManager::isTraitUnlocked(int traitIndex) {
+    if (traitIndex < 0 || traitIndex >= 10) return false;
+    return !gameState.hiddenTraits[traitIndex];
+}
+
+int PartnerDataManager::getUnlockedTraitCount() {
+    int unlockedCount = 0;
+    for (int i = 0; i < 10; i++) {
+        if (!gameState.hiddenTraits[i]) {
+            unlockedCount++;
+        }
+    }
+    return unlockedCount;
 }
 
 GameState& PartnerDataManager::getGameState() {

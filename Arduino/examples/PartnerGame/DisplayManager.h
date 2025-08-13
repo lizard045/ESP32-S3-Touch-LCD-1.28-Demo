@@ -74,7 +74,6 @@ private:
     // 顯示內容方法
     void showSplashScreen();
     void showMenuScreen();
-    void showGameInfo();
     void showMatchingScreen();
     void showResultScreen(bool isMatch, const String& message);
     void showErrorScreen(const String& error);
@@ -97,7 +96,8 @@ public:
     DisplayMode getMode();
     
     // 內容顯示
-    void showPlayerTraits(int playerId);
+    void showGameInfo();
+    void showPlayerTraits(int playerId, bool forceUpdate = false);
     void showMatchResult(bool success);
     void showErrorCount(int current, int max);
     void showMessage(const String& message, lv_color_t color = COLOR_TEXT);

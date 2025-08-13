@@ -241,46 +241,46 @@ void DisplayManager::showGameInfo() {
     }
 }
 
-void DisplayManager::showPlayerTraits(int playerId) {
-    Serial.println("DisplayManager::showPlayerTraits() called");
-    Serial.print("  PlayerId: ");
-    Serial.println(playerId);
-    Serial.print("  dataManager: ");
-    Serial.println(dataManager ? "exists" : "NULL");
-    Serial.print("  contentLabel: ");
-    Serial.println(contentLabel ? "exists" : "NULL");
+void DisplayManager::showPlayerTraits(int playerId, bool forceUpdate) {
+    static String lastContent = "";
+    static String lastStatus = "";
+    static int lastPlayerId = -1;
     
     if (!contentLabel) {
         Serial.println("ERROR: contentLabel is NULL");
         return;
     }
     
-    // 先用簡單的測試文字，不依賴dataManager
-    String testText = "TEST DISPLAY:\n\nGender: Male\nHeight: 170cm\nPet: Don't have\nMBTI: INTJ\n\nThis is a test.";
-    
     if (dataManager) {
         String traits = dataManager->getVisibleTraits(playerId);
-        Serial.print("  Traits length: ");
-        Serial.println(traits.length());
-        Serial.print("  Traits content: ");
-        Serial.println(traits);
         
-        if (traits.length() > 0) {
-            lv_label_set_text(contentLabel, traits.c_str());
-        } else {
-            lv_label_set_text(contentLabel, testText.c_str());
+        // 強制更新或內容真的改變時才更新
+        if (forceUpdate || traits != lastContent || playerId != lastPlayerId) {
+            if (traits.length() > 0) {
+                lv_label_set_text(contentLabel, traits.c_str());
+                lastContent = traits;
+            } else {
+                lv_label_set_text(contentLabel, "No data available");
+                lastContent = "No data available";
+            }
+            lastPlayerId = playerId;
         }
         
-        GameState& gameState = dataManager->getGameState();
-        String status = "Errors: " + String(gameState.errorCount) + "/" + String(dataManager->getMaxErrors());
-        if (statusLabel) lv_label_set_text(statusLabel, status.c_str());
+        // 狀態標籤顯示解鎖進度
+        int unlockedCount = dataManager->getUnlockedTraitCount();
+        int totalCount = dataManager->getTotalTraitCount();
+        String status = "Unlocked: " + String(unlockedCount) + "/" + String(totalCount);
+        
+        // 強制更新或狀態改變時才更新
+        if (forceUpdate || status != lastStatus) {
+            if (statusLabel) lv_label_set_text(statusLabel, status.c_str());
+            lastStatus = status;
+        }
     } else {
-        Serial.println("Using test text because dataManager is NULL");
-        lv_label_set_text(contentLabel, testText.c_str());
-        if (statusLabel) lv_label_set_text(statusLabel, "TEST MODE");
+        Serial.println("ERROR: dataManager is NULL");
+        lv_label_set_text(contentLabel, "ERROR: No data manager");
+        if (statusLabel) lv_label_set_text(statusLabel, "ERROR");
     }
-    
-    Serial.println("Traits text set to label");
 }
 
 void DisplayManager::showMatchResult(bool success) {
@@ -357,6 +357,28 @@ void DisplayManager::showErrorAnimation() {
 
 void DisplayManager::refreshDisplay() {
     lv_obj_invalidate(mainScreen);
+}
+
+// 觸控處理實作
+bool DisplayManager::isButtonPressed() {
+    // 簡單實作：任何觸控都視為按鈕按下
+    return isTouched();
+}
+
+void DisplayManager::handleTouch() {
+    if (!touch || !touch->available()) return;
+    
+    // 獲取觸控資料
+    int x = touch->data.x;
+    int y = touch->data.y;
+    byte gestureID = touch->data.gestureID;
+    
+    Serial.print("Touch detected: x=");
+    Serial.print(x);
+    Serial.print(", y=");
+    Serial.print(y);
+    Serial.print(", gesture=");
+    Serial.println(gestureID);
 }
 
 // LVGL回調函數實作
