@@ -289,6 +289,8 @@ void setup() {
     lv_label_set_long_mode(mainLabel, LV_LABEL_LONG_WRAP);
     lv_obj_align(mainLabel, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_text_align(mainLabel, LV_TEXT_ALIGN_CENTER, 0);
+    // 設定較大的字體
+    lv_obj_set_style_text_font(mainLabel, &lv_font_montserrat_20, 0);
     
     // 初始顯示
     updateDisplay();

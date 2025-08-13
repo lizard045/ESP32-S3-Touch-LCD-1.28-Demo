@@ -140,7 +140,6 @@ String PartnerDataManager::getVisibleTraits(int playerId) {
         result += "\n";
     }
     
-    // 移除 Errors 顯示
     
     return result;
 }
@@ -268,6 +267,6 @@ String PartnerDataManager::formatTraitForDisplay(int traitIndex, const String& v
     if (isHidden) {
         return traitName + ": ???";
     } else {
-        return traitName + ": " + value;
+        return traitName + ":\n" + value;
     }
 }
