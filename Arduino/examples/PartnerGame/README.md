@@ -82,7 +82,7 @@ ESP32-S3 腳位配置:
 
 ### 3. 編譯設定
 1. 選擇開發板: "ESP32S3 Dev Module"
-2. 設定分割: "Default 4MB with spiffs"
+2. 設定分割: "Default 16M Flash (3MB APP/9.9MB FATFS)"
 3. 上傳速度: 921600
 4. CPU頻率: 240MHz
 
