@@ -12,6 +12,7 @@
 #include <TFT_eSPI.h>
 #include "lv_conf.h"
 #include "CST816S.h"
+#include <IRremote.h>
 
 // 自定義程式庫
 #include "PartnerData.h"
@@ -32,6 +33,22 @@ CST816S touch(6, 7, 13, 5);  // sda, scl, rst, irq
 
 // 遊戲管理器
 PartnerDataManager dataManager;
+
+// 紅外線接收設定（與傳輸端一致）
+#define IR_RECV_PIN 16
+#define IR_ADDRESS  0x1234
+enum IRCommand : uint8_t {
+    CMD_HANDSHAKE  = 0x01,
+    CMD_PLAYER_ID  = 0x02,
+    CMD_MATCH_REQ  = 0x03,
+    CMD_MATCH_ACK  = 0x04,
+    CMD_MATCH_FAIL = 0x05,
+    CMD_HEARTBEAT  = 0x06,
+    CMD_RESET      = 0x07
+};
+static IRrecv irrecv(IR_RECV_PIN);
+static decode_results irResults;
+static bool irMatchedShown = false;
 
 // 遊戲狀態
 enum GamePhase {
@@ -300,6 +317,10 @@ void setup() {
     Serial.print(dataManager.getUnlockedTraitCount());
     Serial.print("/");
     Serial.println(dataManager.getTotalTraitCount());
+
+    // 啟動 IR 接收
+    irrecv.enableIRIn();
+    Serial.println("IR Receiver ready (GPIO16, NEC 32-bit)");
 }
 
 void loop() {
@@ -307,6 +328,23 @@ void loop() {
     
     // 更新 LVGL
     lv_timer_handler();
+
+    // 檢查 IR 訊號：收到配對請求就顯示 "It's Match"
+    if (!irMatchedShown && irrecv.decode(&irResults)) {
+        if (irResults.decode_type == NEC && irResults.address == IR_ADDRESS) {
+            uint32_t value = irResults.value;
+            uint8_t cmd = (value >> 24) & 0xFF;
+            uint8_t playerId = (value >> 16) & 0xFF;
+            if (cmd == CMD_MATCH_REQ && playerId == 0) {
+                currentPhase = PHASE_RESULT;
+                if (mainLabel) {
+                    lv_label_set_text(mainLabel, "It's Match");
+                }
+                irMatchedShown = true;
+            }
+        }
+        irrecv.resume();
+    }
     
     // 檢查觸控狀態變化
     bool currentTouchState = touch.available();
