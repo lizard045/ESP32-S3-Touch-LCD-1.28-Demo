@@ -165,6 +165,8 @@ void handleSwipe() {
                 // 單擊進入掃描模式
                 Serial.println("Enter scanning mode");
                 currentPhase = PHASE_SCANNING;
+                // 開始 IR 掃描，於序列埠輸出接收情況
+                irComm.startScanning();
                 if (mainLabel) {
                     lv_label_set_text(mainLabel, "SCANNING...\n\nTap again to match");
                 }
@@ -189,6 +191,8 @@ void handleTouch() {
             
             if (matchResult) {
                 Serial.println("Match successful!");
+                // 結束 IR 掃描
+                irComm.stopScanning();
                 currentPhase = PHASE_RESULT;
                 if (mainLabel) {
                     lv_label_set_text(mainLabel, "MATCH!\n\nCongratulations!");
@@ -199,12 +203,16 @@ void handleTouch() {
                 dataManager.processWrongMatch();
                 
                 if (dataManager.isGameOver()) {
+                    // 結束 IR 掃描
+                    irComm.stopScanning();
                     currentPhase = PHASE_RESULT;
                     if (mainLabel) {
                         lv_label_set_text(mainLabel, "GAME OVER\n\nTry Again!");
                     }
                     lastUpdate = now;
                 } else {
+                    // 結束 IR 掃描
+                    irComm.stopScanning();
                     currentPhase = PHASE_DISPLAYING;
                     // 強制更新顯示，因為解鎖了新特徵
                     updateDisplay();
@@ -238,6 +246,7 @@ void setup() {
     
     // 先初始化 TFT，確保面板供電與 SPI Ready，再啟動 LVGL
     Serial.println("before tft.reset");
+
     pinMode(LCD_RST_PIN, OUTPUT);
     digitalWrite(LCD_RST_PIN, HIGH);
     delay(5);
@@ -349,6 +358,13 @@ void loop() {
     }
     lv_timer_handler();
     irComm.update();
+    // 取出並列印所有新收到的 IR 訊息（監控視窗可見）
+    IRMessage msg;
+    while (irComm.hasNewMessage()) {
+        if (irComm.getNextMessage(msg)) {
+            irComm.printMessage(msg);
+        }
+    }
 
     // IR 訊號由通訊模組處理（此處不直接存取 IRremote 以避免多重定義）
     
