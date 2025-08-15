@@ -181,8 +181,8 @@ bool PartnerDataManager::checkMatch(int playerId1, int playerId2) {
 void PartnerDataManager::processWrongMatch() {
     gameState.errorCount++;
     
-    // 如果還有錯誤機會，揭露一個隱藏特徵
-    if (gameState.errorCount < getMaxErrors()) {
+    // 錯誤達到上限當次也要揭露，最多可 +3 → CR 上限 8/10
+    if (gameState.errorCount <= getMaxErrors()) {
         revealRandomTrait();
     }
     

@@ -154,7 +154,11 @@ bool IRCommunication::receiveMessage(IRMessage& message) {
         return false;
     }
     
-    // 僅處理 NEC
+    // 顯示基本解碼資訊與 RAW 時序，便於除錯（包含非 NEC 遙控器）
+    Serial.println(resultToHumanReadableBasic(&results));
+    Serial.println(resultToTimingInfo(&results));
+
+    // 僅處理 NEC，其他協議僅輸出除錯訊息並作為「錯誤配對」處理
     if (results.decode_type != decode_type_t::NEC) {
         irrecv->resume();
         dataManager.processWrongMatch();
@@ -244,15 +248,15 @@ void IRCommunication::processMessage(const IRMessage& message) {
             break;
             
         case CMD_MATCH_REQ:
-            // 處理配對請求
-            if (message.data == myPlayerId) {
-                // 正確的配對
+            // 處理配對請求：規則改為「配對到玩家0 即為成功」
+            if (message.data == 0) {
+                // 正確的配對（玩家0）
                 sendMatchResponse(true);
-                Serial.println("配對成功!");
+                Serial.println("配對成功! (匹配玩家0)");
             } else {
-                // 錯誤的配對:累加錯誤次數
+                // 錯誤的配對：累加錯誤次數並解鎖一個特徵
                 sendMatchResponse(false);
-                Serial.println("配對失敗!");
+                Serial.println("配對失敗! (非玩家0)");
                 dataManager.processWrongMatch();
             }
             break;

@@ -363,6 +363,14 @@ void loop() {
     while (irComm.hasNewMessage()) {
         if (irComm.getNextMessage(msg)) {
             irComm.printMessage(msg);
+            // 收到任何 NEC 訊息即視為配對成功
+            irComm.stopScanning();
+            currentPhase = PHASE_RESULT;
+            Serial.println("[UI] Show: It's Match ! (NEC received)");
+            if (mainLabel) {
+                lv_label_set_text(mainLabel, "It's Match !");
+            }
+            lastUpdate = millis();
         }
     }
 
