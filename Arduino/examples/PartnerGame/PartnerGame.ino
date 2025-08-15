@@ -113,17 +113,17 @@ void updateDisplay() {
     
     // 顯示單個特徵
     String content = dataManager.getSingleTrait(currentPlayerId, currentTraitIndex);
-    Serial.print("updateDisplay -> trait index: ");
-    Serial.print(currentTraitIndex);
-    Serial.print(", text: ");
-    Serial.println(content);
     
     // 添加特徵導航提示
     // String navigationInfo = "(" + String(currentTraitIndex + 1) + "/10)\n\nSwipe to navigate";
     // content = content + "\n\n" + navigationInfo;
     
-    // 只有內容改變時才更新
+    // 只有內容或索引改變時才輸出及更新顯示
     if (content != lastContent || currentTraitIndex != lastTraitIndex) {
+        Serial.print("updateDisplay -> trait index: ");
+        Serial.print(currentTraitIndex);
+        Serial.print(", text: ");
+        Serial.println(content);
         if (mainLabel) {
             lv_label_set_text(mainLabel, content.c_str());
             lastContent = content;
