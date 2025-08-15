@@ -16,7 +16,7 @@
 #define TOUCH_RST        18  // tp-rst - 18
 
 // 是否啟用觸控（疑難排解時可暫時關閉以排除中斷/I2C 造成的崩潰）
-#define TOUCH_ENABLED     0
+#define TOUCH_ENABLED     1
 
 // 紅外線設定 (使用可用的GPIO)
 #define IR_SEND_PIN      15  // GPIO15 - 紅外線發射（如需調整請告訴我）
