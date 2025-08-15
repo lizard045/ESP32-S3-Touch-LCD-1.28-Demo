@@ -3,11 +3,11 @@
 
 #include <Arduino.h>
 #include "Config.h"
-
-// 前向宣告，避免在標頭檔中包含IRremote.h
-class IRrecv;
-class IRsend;
-struct decode_results;
+// 使用 IRremoteESP8266 做為 IR 收發實作
+#include <IRremoteESP8266.h>
+#include <IRsend.h>
+#include <IRrecv.h>
+#include <IRutils.h>
 
 // 紅外線通訊相關常數（與 Config.h 同步）
 #ifndef IR_SEND_PIN
@@ -24,7 +24,6 @@ struct decode_results;
 #define IR_ADDRESS      0x1234  // 固定位址
 #define IR_TIMEOUT      5000    // 5秒超時
 
-// IRremote 3.9.0 相容性定義將在 .cpp 檔中處理
 
 // 指令定義
 enum IRCommand {
@@ -63,10 +62,9 @@ private:
     int m_recvPin;
     int m_ledPin;
     
-    // IRremote 物件
-    IRsend* irSender;
-    IRrecv* irReceiver;
-    decode_results* results;
+    // IRremoteESP8266 物件
+    IRsend* irsend;
+    IRrecv* irrecv;
     
     // 通訊狀態
     IRCommState currentState;
@@ -80,10 +78,16 @@ private:
     int queueHead;
     int queueTail;
     int queueCount;
+
+    // 配對請求的暫存（用於 4.x 多封包資料合併）
+    bool pendingMatchReq;
+    uint8_t pendingSenderId;
+    uint32_t pendingReqTime;
     
     // 私有方法
     void initHardware();
     void sendRawCommand(uint8_t command, uint8_t playerId, uint16_t data = 0);
+    void sendDataByte(uint8_t playerId, uint8_t dataByte);
     bool receiveMessage(IRMessage& message);
     void processMessage(const IRMessage& message);
     void updateLED();

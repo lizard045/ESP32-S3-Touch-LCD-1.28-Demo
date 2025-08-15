@@ -32,12 +32,8 @@ static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf[screenWidth * screenHeight / 10];
 
 // 硬體物件
-#define PIN_TFT_CS   10
-#define PIN_TFT_DC    9
-#define PIN_TFT_RST  17
-#define PIN_TFT_SCLK 12
-#define PIN_TFT_MOSI 11
-Adafruit_GC9A01A tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_MOSI, PIN_TFT_SCLK, PIN_TFT_RST);
+// 腳位統一由 Config.h 提供
+Adafruit_GC9A01A tft(LCD_CS_PIN, LCD_DC_PIN, LCD_MOSI_PIN, LCD_SCLK_PIN, LCD_RST_PIN);
 CST816S touch(TOUCH_SDA, TOUCH_SCL, TOUCH_RST, TOUCH_IRQ);  // 與 Config.h 同步
 
 // 遊戲管理器
@@ -242,12 +238,12 @@ void setup() {
     
     // 先初始化 TFT，確保面板供電與 SPI Ready，再啟動 LVGL
     Serial.println("before tft.reset");
-    pinMode(PIN_TFT_RST, OUTPUT);
-    digitalWrite(PIN_TFT_RST, HIGH);
+    pinMode(LCD_RST_PIN, OUTPUT);
+    digitalWrite(LCD_RST_PIN, HIGH);
     delay(5);
-    digitalWrite(PIN_TFT_RST, LOW);
+    digitalWrite(LCD_RST_PIN, LOW);
     delay(10);
-    digitalWrite(PIN_TFT_RST, HIGH);
+    digitalWrite(LCD_RST_PIN, HIGH);
     delay(120);
     Serial.println("before tft.begin");
     tft.begin();

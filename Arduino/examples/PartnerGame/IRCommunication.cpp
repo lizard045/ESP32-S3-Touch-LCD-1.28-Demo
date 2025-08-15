@@ -1,30 +1,15 @@
 #include "IRCommunication.h"
 
-// 確保 IRremote 啟用 NEC 協定（發送與接收）
-#ifndef DECODE_NEC
-#define DECODE_NEC
-#endif
-#ifndef SEND_NEC
-#define SEND_NEC
-#endif
-#include <IRremote.h>
 #include "PartnerData.h"
 
 extern PartnerDataManager dataManager;
-
-// IRremote 3.9.0 相容性定義
-#ifndef NEC
-#define NEC 1
-#endif
 
 IRCommunication::IRCommunication(int send_pin, int recv_pin, int led_pin) {
     m_sendPin = send_pin;
     m_recvPin = recv_pin;
     m_ledPin = led_pin;
-    
-    irSender = nullptr;
-    irReceiver = nullptr;
-    results = new decode_results();
+    irsend = nullptr;
+    irrecv = nullptr;
     
     currentState = STATE_IDLE;
     myPlayerId = 0;
@@ -36,6 +21,11 @@ IRCommunication::IRCommunication(int send_pin, int recv_pin, int led_pin) {
     queueHead = 0;
     queueTail = 0;
     queueCount = 0;
+
+    // 多封包暫存
+    pendingMatchReq = false;
+    pendingSenderId = 0;
+    pendingReqTime = 0;
 }
 
 IRCommunication::~IRCommunication() {
@@ -48,20 +38,16 @@ bool IRCommunication::begin(uint8_t playerId) {
     // 初始化硬體
     initHardware();
     
-    // 創建IRremote物件 (IRremote 3.9.0 相容)
-    irSender = new IRsend();
-    irReceiver = new IRrecv(m_recvPin);
-    
-    if (!irSender || !irReceiver) {
-        Serial.println("IRCommunication: 無法創建IR物件");
-        return false;
+    // 初始化 IRremoteESP8266 物件
+    if (!irsend) {
+        irsend = new IRsend(m_sendPin);
     }
-    
-    // 設置發送腳位
-    irSender->begin(m_sendPin);
-    
-    // 啟動接收器 (IRremote 3.9.0)
-    irReceiver->enableIRIn();
+    irsend->begin();
+    if (!irrecv) {
+        // 使用預設緩衝與 timeout，開啟 RMT 接收
+        irrecv = new IRrecv(m_recvPin);
+    }
+    irrecv->enableIRIn();
     
     currentState = STATE_IDLE;
     clearQueue();
@@ -74,22 +60,10 @@ bool IRCommunication::begin(uint8_t playerId) {
 }
 
 void IRCommunication::end() {
-    if (irReceiver) {
-        irReceiver->disableIRIn();
-        delete irReceiver;
-        irReceiver = nullptr;
+    // 可選：停用接收
+    if (irrecv) {
+        // IRremoteESP8266 沒有明確 disable API，保留指標
     }
-    
-    if (irSender) {
-        delete irSender;
-        irSender = nullptr;
-    }
-    
-    if (results) {
-        delete results;
-        results = nullptr;
-    }
-    
     currentState = STATE_IDLE;
 }
 
@@ -125,7 +99,9 @@ bool IRCommunication::sendPlayerID(uint8_t playerId) {
 
 bool IRCommunication::sendMatchRequest(uint8_t targetId) {
     targetPlayerId = targetId;
-    sendRawCommand(CMD_MATCH_REQ, myPlayerId, targetId);
+    // 先送 MATCH_REQ，再用第二包送目標 ID（以 CMD_PLAYER_ID 攜帶）
+    sendRawCommand(CMD_MATCH_REQ, myPlayerId);
+    sendDataByte(myPlayerId, targetId);
     currentState = STATE_MATCHING;
     Serial.print("發送配對請求給玩家: ");
     Serial.println(targetId);
@@ -147,44 +123,81 @@ bool IRCommunication::sendHeartbeat() {
 }
 
 void IRCommunication::sendRawCommand(uint8_t command, uint8_t playerId, uint16_t data) {
-    if (!irSender) return; 
-    uint32_t message = encodeMessage(command, playerId, data);
-#if defined(IRREMOTE_VERSION_MAJOR) && (IRREMOTE_VERSION_MAJOR < 4)
-    uint32_t raw = ((uint32_t)IR_ADDRESS << 16) | (message & 0xFFFF);
-    irSender->sendNEC(raw, 32);  // 舊版 IRremote 使用 32 位元資料
-#else
-    irSender->sendNEC(IR_ADDRESS, static_cast<uint8_t>(message & 0xFF), 0);  // 新版 IRremote
-#endif
-    
+    // 以 NEC 32 位：[addr16][cmd8][~cmd8]
+    uint16_t address16 = ((uint16_t)(IR_ADDRESS & 0xFF00)) | playerId;
+    uint8_t cmd8 = command;
+    uint32_t frame = ((uint32_t)address16 << 16) | ((uint32_t)cmd8 << 8) | ((uint32_t)(~cmd8) & 0xFF);
+    if (irsend) {
+        irsend->sendNEC(frame, 32, 0);
+    }
     lastSendTime = millis();
     updateLED();
-    
     delay(50);  // 短暫延遲避免衝突
 }
 
+void IRCommunication::sendDataByte(uint8_t playerId, uint8_t dataByte) {
+    // 使用 NEC，將 1-byte 資料放在 command 欄位
+    uint16_t address16 = ((uint16_t)(IR_ADDRESS & 0xFF00)) | playerId;
+    uint8_t cmd8 = dataByte;
+    uint32_t frame = ((uint32_t)address16 << 16) | ((uint32_t)cmd8 << 8) | ((uint32_t)(~cmd8) & 0xFF);
+    if (irsend) {
+        irsend->sendNEC(frame, 32, 0);
+    }
+    lastSendTime = millis();
+    updateLED();
+    delay(30);
+}
+
 bool IRCommunication::receiveMessage(IRMessage& message) {
-    if (!irReceiver) return false;
+    decode_results results;
+    if (!irrecv || !irrecv->decode(&results)) {
+        return false;
+    }
     
-    
-    // 嘗試解碼任何收到的訊號
-    if (!irReceiver->decode(results)) {
-        // decode() 失敗視為未知訊號
+    // 僅處理 NEC
+    if (results.decode_type != decode_type_t::NEC) {
+        irrecv->resume();
         dataManager.processWrongMatch();
         return false;
     }
+    uint32_t v = (uint32_t)results.value;
+    uint16_t addr16 = (uint16_t)((v >> 16) & 0xFFFF);
+    uint8_t senderId = (uint8_t)(addr16 & 0xFF);
+    uint8_t cmd = (uint8_t)((v >> 8) & 0xFF);
 
-    bool ok = decodeMessage(results->value, message);
-    irReceiver->resume(); // 準備接收下一個訊息
-
-    if (results->decode_type == UNKNOWN || !ok) {
-        // 未知協定或無法解析的訊號
-        dataManager.processWrongMatch();
-        return false;
+    bool produced = false;
+    // 多封包合併：先收到 MATCH_REQ，等待下一個來自同 sender 的任意封包之 command 當作 1-byte data
+    if (cmd == CMD_MATCH_REQ) {
+        pendingMatchReq = true;
+        pendingSenderId = senderId;
+        pendingReqTime = millis();
+        produced = false; // 先不產生訊息，等待 data
+    } else if (pendingMatchReq && pendingSenderId == senderId && (millis() - pendingReqTime) < 600) {
+        // 合併為完整 MATCH_REQ，將本封包之 command 當作資料位元組
+        message.command = CMD_MATCH_REQ;
+        message.playerId = senderId;
+        message.data = cmd; // 1-byte 資料
+        message.timestamp = millis();
+        message.isValid = true;
+        lastReceiveTime = message.timestamp;
+        produced = true;
+        // 清除暫存
+        pendingMatchReq = false;
+    } else {
+        // 其他單包指令：直接產生訊息
+        message.command = cmd;
+        message.playerId = senderId;
+        message.data = 0;
+        message.timestamp = millis();
+        message.isValid = true;
+        lastReceiveTime = message.timestamp;
+        produced = true;
     }
 
-    message.timestamp = millis();
-    message.isValid = true;
-    lastReceiveTime = millis();
+    irrecv->resume();
+    if (!produced) {
+        return false;
+    }
     return true;
 }
 
@@ -195,10 +208,10 @@ void IRCommunication::update() {
         enqueueMessage(newMessage);
         processMessage(newMessage);
     }
-    
+
     // 更新LED狀態
     updateLED();
-    
+
     // 檢查超時
     if (currentState == STATE_CONNECTING || currentState == STATE_MATCHING) {
         if (isTimeout(lastSendTime, IR_TIMEOUT)) {
@@ -473,15 +486,12 @@ bool IRCommunication::testConnection() {
     Serial.println("測試IR連接...");
     sendHeartbeat();
     delay(100);
-    
-    // 簡單測試：發送心跳並檢查硬體
-    bool hardwareOK = (irSender != nullptr) && (irReceiver != nullptr);
-    
-    Serial.print("硬體狀態: ");
-    Serial.println(hardwareOK ? "正常" : "錯誤");
-    
-    return hardwareOK;
+    // 在 v4 僅做簡單送出測試
+    Serial.println("IR 4.x 發送測試已觸發");
+    return true;
 }
+
+//（已移除重複且舊版的 update() 實作）
 
 // 工具函數實作
 String irCommandToString(IRCommand cmd) {

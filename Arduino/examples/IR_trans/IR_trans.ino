@@ -2,7 +2,7 @@
   IR_trans_ESP32S - 單向紅外線發射（940nm LED + 2N2222）
 
   開發板：ESP32 DevKitC（經典 ESP32-S 系列腳位，如附圖）
-  功能：以 IRremote 產生 38 kHz 載波，送 NEC 32-bit 封包
+  功能：以 IRremoteESP8266 產生 38 kHz 載波（RMT），送 NEC 32-bit 封包
         [command:8][playerId:8][extra:16]，address 固定 0x1234
 
   硬體連接（單純發射，不含接收器）：
@@ -16,12 +16,22 @@
 */
 
 #include <Arduino.h>
-#include <IRremote.h>
+
+// IRremoteESP8266 標頭
+#include <IRremoteESP8266.h>
+#include <IRsend.h>
+#include <IRrecv.h>
+#include <IRutils.h>
 
 // 腳位設定（可依實際需要修改為其他 LEDC 支援腳）
 static const int PIN_IR_TX = 23;
 static const int STATUS_LED_PIN = 2;   // 板載 LED（若無此腳會被忽略）
 static const int PIN_IR_RX = 21;       // VS1838B OUT 接收腳（自我對測）
+
+// IR 物件
+IRsend irsend(PIN_IR_TX);
+IRrecv irrecv(PIN_IR_RX);
+decode_results results;
 
 // 通訊協定（需與接收端一致）
 #define IR_ADDRESS 0x1234
@@ -37,14 +47,6 @@ enum IRCommand : uint8_t {
 };
 
 static uint8_t g_myPlayerId = 0;  // 單機發射端固定 ID
-
-IRsend irsend;
-#if 1
-// IRremote 傳統 IRrecv 介面（相容多數版本）
-#include <IRremote.h>
-IRrecv irrecv(PIN_IR_RX);
-decode_results irResults;
-#endif
 
 // 傳送節奏與測試控制
 static uint32_t sendIntervalMs = 300;
@@ -62,16 +64,31 @@ static uint32_t encodeMessage(uint8_t command, uint8_t playerId, uint16_t extra)
 }
 
 static void sendCommand(IRCommand cmd, uint16_t extra = 0) {
-  uint32_t message = encodeMessage((uint8_t)cmd, g_myPlayerId, extra);
-  irsend.sendNEC(IR_ADDRESS, message, 0);
+  // 採用兩封包方案（NEC 32位）：
+  // 封包1：address16 高8=IR_ADDRESS>>8，低8=playerId；command=IRCommand，最後 8 位為 ~command
+  uint16_t address16 = ((uint16_t)(IR_ADDRESS & 0xFF00)) | g_myPlayerId;
+  if (cmd == CMD_MATCH_REQ) {
+    uint8_t c = (uint8_t)CMD_MATCH_REQ;
+    uint32_t frame1 = ((uint32_t)address16 << 16) | ((uint32_t)c << 8) | ((uint32_t)(~c) & 0xFF);
+    irsend.sendNEC(frame1, 32, 0);
+    delay(30);
+    // 封包2：以 1-byte 資料（targetId 或 extra 低 8 位）放在 command 欄位
+    uint8_t d = (uint8_t)(extra & 0xFF);
+    uint32_t frame2 = ((uint32_t)address16 << 16) | ((uint32_t)d << 8) | ((uint32_t)(~d) & 0xFF);
+    irsend.sendNEC(frame2, 32, 0);
+  } else {
+    uint8_t c = (uint8_t)cmd;
+    uint32_t frame = ((uint32_t)address16 << 16) | ((uint32_t)c << 8) | ((uint32_t)(~c) & 0xFF);
+    irsend.sendNEC(frame, 32, 0);
+  }
 }
 
 void setup() {
-  Serial.begin(921600);
+  Serial.begin(115200);
+  delay(100);
 
-  // 以 LEDC 輸出 38 kHz 載波
-  irsend.begin(PIN_IR_TX);
-  // 使用 IRremote 既有預設（NEC 在 ESP32 會使用 38kHz 載波）
+  // 初始化 IR 傳送/接收
+  irsend.begin();
 
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
@@ -81,8 +98,9 @@ void setup() {
   Serial.print("IR RX ready @GPIO");
   Serial.println(PIN_IR_RX);
 
-  Serial.println("IR TX ready: ESP32-S @GPIO23, NEC 32-bit");
+  Serial.println("IR TX ready: ESP32-S @GPIO23, NEC 32-bit (IRremoteESP8266)");
   Serial.println("Commands: 'c' toggle carrier test (0.5s on/off). Normal mode sends NEC every 300ms.");
+  Serial.println("Tip: Point your TATUNG AC remote to the receiver to see decoded or RAW output.");
 }
 
 void loop() {
@@ -97,10 +115,11 @@ void loop() {
         ledcAttachPin(PIN_IR_TX, CARRIER_CH);
         Serial.println("Carrier test: ON (toggle every 500ms)");
       } else {
-        // 離開測試模式：關閉載波並把 PIN 交回 IRremote
+        // 離開測試模式：關閉載波並把 PIN 交回 IR 發送
         ledcWrite(CARRIER_CH, 0);
         ledcDetachPin(PIN_IR_TX);
-        irsend.begin(PIN_IR_TX);
+        // 還原 IR 發送（RMT）
+        irsend.begin();
         Serial.println("Carrier test: OFF, back to NEC sender");
         lastSendMs = 0; // 立即觸發一次傳送
       }
@@ -138,19 +157,13 @@ void loop() {
     Serial.println(sendCount);
   }
 
-  // 接收列印（NEC）
-  if (irrecv.decode(&irResults)) {
-    // 簡要輸出結果
-    Serial.print("RX: type=");
-    Serial.print(irResults.decode_type);
-    Serial.print(", addr=0x");
-    Serial.print(irResults.address, HEX);
-    Serial.print(", value=0x");
-    Serial.print(irResults.value, HEX);
-    Serial.print(", bits=");
-    Serial.println(irResults.bits);
+  // 接收列印（詳細 + RAW，便於空調遙控器分析）
+  if (irrecv.decode(&results)) {
+    // 基本可讀資訊
+    Serial.println(resultToHumanReadableBasic(&results));
+    // 輸出 RAW 訊號（受限於快取長度）
+    Serial.println(resultToTimingInfo(&results));
+    Serial.println();
     irrecv.resume();
   }
 }
-
-

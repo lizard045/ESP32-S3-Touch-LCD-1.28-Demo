@@ -9,19 +9,29 @@
 #define SCREEN_HEIGHT    240
 #define SCREEN_ROTATION  0
 
+// SPI / LCD 腳位（依最新接線）
+// SCLK -> GPIO12, MOSI -> GPIO11
+// LCD_BL 直連 3.3V（非由 GPIO 控制）
+#define LCD_SCLK_PIN     12
+#define LCD_MOSI_PIN     11
+#define LCD_CS_PIN       10  // LCD_CS - 10
+#define LCD_DC_PIN        9   // LCD_DC-9
+#define LCD_RST_PIN       8   // LCD_RST-8
+// 若需以 GPIO 控制背光，請額外接至可用 GPIO 並新增定義；目前為常亮：3.3V
+
 // 觸控設定（依你提供的最新接線）
-#define TOUCH_SDA        16  // tp_sda - 16
-#define TOUCH_SCL        21  // 建議改用 GPIO21，避免與 USB D+ (GPIO20) 衝突
-#define TOUCH_IRQ        13  // tp-int - 13
-#define TOUCH_RST        18  // tp-rst - 18
+#define TOUCH_SDA        16  // TP_SDA - 16
+#define TOUCH_SCL        21  // TP_SCL - 21
+#define TOUCH_IRQ        13  // TP_INT - 13
+#define TOUCH_RST        18  // TP_RST - 18
 
 // 是否啟用觸控（疑難排解時可暫時關閉以排除中斷/I2C 造成的崩潰）
 #define TOUCH_ENABLED     1
 
 // 紅外線設定 (使用可用的GPIO)
-#define IR_SEND_PIN      15  // GPIO15 - 紅外線發射（如需調整請告訴我）
-#define IR_RECV_PIN      7   // recive out - 7（依你提供的更新）
-#define IR_LED_PIN       2   // 狀態指示LED（避免與 LCD_RST=17 衝突）
+#define IR_SEND_PIN      15  // 紅外線發射（未變更）
+#define IR_RECV_PIN      7   // Receiver out - 7
+#define IR_LED_PIN       5   // LED DIN - 5（狀態指示/外接LED）
 
 // 電池監測 (使用ADC功能的GPIO)
 #define BATTERY_PIN      33  // GPIO33 - 支援ADC和觸控功能
