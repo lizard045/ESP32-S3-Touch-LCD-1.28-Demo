@@ -106,6 +106,8 @@ private:
     // 錯誤/正確信號處理
     void recordWrongSignal();
     void resetWrongStreak();
+    // 當達到兩次錯誤時的事件旗標（由主程式讀取後清除）
+    volatile bool wrongUnlockEvent;
 
 public:
     IRCommunication(int send_pin = IR_SEND_PIN, int recv_pin = IR_RECV_PIN, int led_pin = IR_LED_PIN);
@@ -144,6 +146,8 @@ public:
     uint8_t getPlayerId();
     String getStateString();
     String getCommandString(uint8_t command);
+    // 讀取並清除兩次錯誤觸發的解鎖事件（回傳 true 表示本次消耗到事件）
+    bool consumeWrongUnlockEvent();
     
     // 除錯功能
     void printMessage(const IRMessage& message);

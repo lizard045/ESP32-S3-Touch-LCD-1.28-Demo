@@ -28,6 +28,8 @@ IRCommunication::IRCommunication(int send_pin, int recv_pin, int led_pin) {
     pendingReqTime = 0;
     // 錯誤連擊計數
     wrongStreak = 0;
+    // UI 通知事件旗標
+    wrongUnlockEvent = false;
 }
 
 IRCommunication::~IRCommunication() {
@@ -386,6 +388,14 @@ String IRCommunication::getCommandString(uint8_t command) {
     return irCommandToString((IRCommand)command);
 }
 
+bool IRCommunication::consumeWrongUnlockEvent() {
+    if (wrongUnlockEvent) {
+        wrongUnlockEvent = false;
+        return true;
+    }
+    return false;
+}
+
 void IRCommunication::updateLED() {
     static uint32_t lastBlink = 0;
     static bool ledState = false;
@@ -491,6 +501,7 @@ void IRCommunication::recordWrongSignal() {
         dataManager.processWrongMatch();
         Serial.println("[IR] Two consecutive wrong signals -> CR +1");
         wrongStreak = 0;
+        wrongUnlockEvent = true;
     }
 }
 

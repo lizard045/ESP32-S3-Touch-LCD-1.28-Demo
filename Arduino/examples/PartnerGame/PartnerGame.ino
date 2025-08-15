@@ -59,6 +59,12 @@ static unsigned long lastUpdate = 0;
 // LVGL 物件
 static lv_obj_t* mainLabel = nullptr;
 static lv_obj_t* statusLabel = nullptr;
+// 錯誤大 X 覆蓋層（使用兩條紅色對角線）
+static lv_obj_t* errorLine1 = nullptr;
+static lv_obj_t* errorLine2 = nullptr;
+static bool errorXShowing = false;
+static unsigned long errorShownAt = 0;
+static const uint16_t errorDisplayMs = 1200;
 
 // 測試CSV資料
 const String testCSV = 
@@ -131,6 +137,44 @@ void updateDisplay() {
             lastStatus = status;
         }
     }
+}
+
+// 建立或顯示紅色大 X
+void showErrorX() {
+    static bool style_inited = false;
+    static lv_style_t style_line;
+    if (!style_inited) {
+        lv_style_init(&style_line);
+        lv_style_set_line_color(&style_line, lv_palette_main(LV_PALETTE_RED));
+        lv_style_set_line_width(&style_line, 10);
+        lv_style_set_line_rounded(&style_line, true);
+        style_inited = true;
+    }
+
+    // 對角線座標
+    static lv_point_t line1_points[2] = {{20, 20}, {220, 220}};
+    static lv_point_t line2_points[2] = {{220, 20}, {20, 220}};
+
+    if (!errorLine1) {
+        errorLine1 = lv_line_create(lv_scr_act());
+        lv_obj_add_style(errorLine1, &style_line, 0);
+        lv_line_set_points(errorLine1, line1_points, 2);
+    }
+    if (!errorLine2) {
+        errorLine2 = lv_line_create(lv_scr_act());
+        lv_obj_add_style(errorLine2, &style_line, 0);
+        lv_line_set_points(errorLine2, line2_points, 2);
+    }
+    lv_obj_clear_flag(errorLine1, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(errorLine2, LV_OBJ_FLAG_HIDDEN);
+
+    errorXShowing = true;
+    errorShownAt = millis();
+}
+
+void hideErrorX() {
+    if (errorLine1) lv_obj_add_flag(errorLine1, LV_OBJ_FLAG_HIDDEN);
+    if (errorLine2) lv_obj_add_flag(errorLine2, LV_OBJ_FLAG_HIDDEN);
 }
 
 // 處理滑動切換特徵
@@ -374,6 +418,16 @@ void loop() {
         }
     }
 
+    // 監聽 IR 連續兩次錯誤事件：顯示大 X 並處理解鎖/結束
+    if (irComm.consumeWrongUnlockEvent()) {
+        Serial.println("[UI] Two wrong signals -> show big X");
+        irComm.stopScanning();
+        showErrorX();
+        // 暫時進入結果狀態，用於覆蓋顯示
+        currentPhase = PHASE_RESULT;
+        lastUpdate = millis();
+    }
+
     // IR 訊號由通訊模組處理（此處不直接存取 IRremote 以避免多重定義）
     
     // 檢查觸控狀態變化
@@ -397,7 +451,24 @@ void loop() {
     }
     
     // 結果顯示自動返回
-    if (currentPhase == PHASE_RESULT && (now - lastUpdate > 5000)) {
+    if (currentPhase == PHASE_RESULT && errorXShowing && (now - errorShownAt > errorDisplayMs)) {
+        // 大 X 展示完畢，根據遊戲狀態決定下一步
+        hideErrorX();
+        errorXShowing = false;
+        if (dataManager.isGameOver()) {
+            Serial.println("[UI] Game Over after wrong signals");
+            if (mainLabel) {
+                lv_label_set_text(mainLabel, "GAME OVER\n\nTry Again!");
+            }
+            lastUpdate = now;
+            // 保持在 PHASE_RESULT，交由原本的自動重啟計時處理
+        } else {
+            currentPhase = PHASE_DISPLAYING;
+            updateDisplay();
+        }
+    }
+
+    if (currentPhase == PHASE_RESULT && !errorXShowing && (now - lastUpdate > 5000)) {
         Serial.println("Auto restart game");
         dataManager.resetGame();
         dataManager.startGame(currentPlayerId, currentPlayerId);
