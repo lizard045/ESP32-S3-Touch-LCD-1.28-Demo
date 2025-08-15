@@ -9,10 +9,13 @@
  */
 
 #include <lvgl.h>
-#include <TFT_eSPI.h>
+// 強制使用專案內的螢幕設定（GC9A01 與你提供的腳位相符）
+// 使用工作區內的客製化腳位設定檔（相對於此 .ino 的路徑）
+#include <Adafruit_GFX.h>
+#include <Adafruit_GC9A01A.h>
 #include "lv_conf.h"
 #include "CST816S.h"
-#include <IRremote.h>
+#include "Config.h"
 
 // 自定義程式庫
 #include "PartnerData.h"
@@ -28,15 +31,19 @@ static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf[screenWidth * screenHeight / 10];
 
 // 硬體物件
-TFT_eSPI tft = TFT_eSPI(screenWidth, screenHeight);
-CST816S touch(6, 7, 13, 5);  // sda, scl, rst, irq
+#define PIN_TFT_CS   10
+#define PIN_TFT_DC    9
+#define PIN_TFT_RST  17
+#define PIN_TFT_SCLK 12
+#define PIN_TFT_MOSI 11
+Adafruit_GC9A01A tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_MOSI, PIN_TFT_SCLK, PIN_TFT_RST);
+CST816S touch(TOUCH_SDA, TOUCH_SCL, TOUCH_RST, TOUCH_IRQ);  // 與 Config.h 同步
 
 // 遊戲管理器
 PartnerDataManager dataManager;
 
 // 紅外線接收設定（與傳輸端一致）
-#define IR_RECV_PIN 16
-#define IR_ADDRESS  0x1234
+// IR 通訊邏輯由 `IRCommunication.cpp` 處理，這裡不再直接引用 IRremote，避免多重定義
 enum IRCommand : uint8_t {
     CMD_HANDSHAKE  = 0x01,
     CMD_PLAYER_ID  = 0x02,
@@ -46,8 +53,6 @@ enum IRCommand : uint8_t {
     CMD_HEARTBEAT  = 0x06,
     CMD_RESET      = 0x07
 };
-static IRrecv irrecv(IR_RECV_PIN);
-static decode_results irResults;
 static bool irMatchedShown = false;
 
 // 遊戲狀態
@@ -111,6 +116,10 @@ void updateDisplay() {
     
     // 顯示單個特徵
     String content = dataManager.getSingleTrait(currentPlayerId, currentTraitIndex);
+    Serial.print("updateDisplay -> trait index: ");
+    Serial.print(currentTraitIndex);
+    Serial.print(", text: ");
+    Serial.println(content);
     
     // 添加特徵導航提示
     // String navigationInfo = "(" + String(currentTraitIndex + 1) + "/10)\n\nSwipe to navigate";
@@ -241,15 +250,32 @@ void setup() {
     Serial.begin(115200);
     Serial.println("=== Party Match Game Start ===");
     
-    // 初始化 LVGL
-    lv_init();
-    
-    // 初始化 TFT
+    // 先初始化 TFT，確保面板供電與 SPI Ready，再啟動 LVGL
+    Serial.println("before tft.reset");
+    pinMode(PIN_TFT_RST, OUTPUT);
+    digitalWrite(PIN_TFT_RST, HIGH);
+    delay(5);
+    digitalWrite(PIN_TFT_RST, LOW);
+    delay(10);
+    digitalWrite(PIN_TFT_RST, HIGH);
+    delay(120);
+    Serial.println("before tft.begin");
     tft.begin();
     tft.setRotation(0);
-    
-    // 初始化觸控
+    Serial.println("TFT init OK");
+    delay(50);
+
+    // 初始化 LVGL
+    lv_init();
+    Serial.println("lv_init OK");
+
+    // 初始化觸控（可選）
+    #if TOUCH_ENABLED
     touch.begin();
+    Serial.println("Touch init OK");
+    #else
+    Serial.println("Touch disabled");
+    #endif
     
     // 初始化 LVGL 顯示緩衝區
     lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * screenHeight / 10);
@@ -262,6 +288,7 @@ void setup() {
     disp_drv.flush_cb = my_disp_flush;
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);
+    Serial.println("LVGL display driver registered");
     
     // 註冊觸控驅動
     static lv_indev_drv_t indev_drv;
@@ -269,28 +296,24 @@ void setup() {
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = my_touchpad_read;
     lv_indev_drv_register(&indev_drv);
+    Serial.println("LVGL indev driver registered");
     
-    // 創建 LVGL 計時器
-    const esp_timer_create_args_t lvgl_tick_timer_args = {
-        .callback = &lvgl_tick_callback,
-        .name = "lvgl_tick"
-    };
+    // 使用 loop() 內以 millis() 推進 LVGL tick，避免 esp_timer 相容性問題
     
-    esp_timer_handle_t lvgl_tick_timer = NULL;
-    esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer);
-    esp_timer_start_periodic(lvgl_tick_timer, LVGL_TICK_PERIOD_MS * 1000);
-    
-    // 載入測試資料
+    // 載入測試資料（或從檔案載入）
     if (!dataManager.loadFromCSV(testCSV)) {
         Serial.println("ERROR: CSV data loading failed");
-        return;
+    } else {
+        Serial.print("Loaded players: ");
+        Serial.println(dataManager.getPlayerCount());
     }
     
     Serial.print("Loaded players: ");
     Serial.println(dataManager.getPlayerCount());
     
-    // 開始遊戲
-    dataManager.startGame(0, 0);
+    // 開始遊戲（確保 currentPlayerId 合法）
+    currentPlayerId = 0;
+    dataManager.startGame(currentPlayerId, currentPlayerId);
     
     // 創建 UI 元素
     // CR計數器在上方置中
@@ -309,8 +332,13 @@ void setup() {
     // 設定較大的字體
     lv_obj_set_style_text_font(mainLabel, &lv_font_montserrat_20, 0);
     
-    // 初始顯示
+    // 初始顯示（先顯示面板就緒，再切到特徵畫面）
+    lv_label_set_text(mainLabel, "GC9A01 OK\nLoading traits...");
+    lv_obj_set_style_text_font(mainLabel, &lv_font_montserrat_20, 0);
+    lv_timer_handler();
+    // 切換到特徵顯示
     updateDisplay();
+    Serial.println("Displayed first trait");
     
     Serial.println("Initialization complete");
     Serial.print("Unlocked traits: ");
@@ -318,46 +346,35 @@ void setup() {
     Serial.print("/");
     Serial.println(dataManager.getTotalTraitCount());
 
-    // 啟動 IR 接收
-    irrecv.enableIRIn();
-    Serial.println("IR Receiver ready (GPIO16, NEC 32-bit)");
+    // IR 接收由通訊模組負責
 }
 
 void loop() {
     static bool lastTouchState = false;
+    static unsigned long lastTickMs = 0;
     
     // 更新 LVGL
+    unsigned long nowMs = millis();
+    unsigned long elapsed = nowMs - lastTickMs;
+    if (elapsed > 0) {
+        lv_tick_inc(elapsed);
+        lastTickMs = nowMs;
+    }
     lv_timer_handler();
 
-    // 檢查 IR 訊號：收到配對請求就顯示 "It's Match"
-    if (!irMatchedShown && irrecv.decode(&irResults)) {
-        if (irResults.decode_type == NEC && irResults.address == IR_ADDRESS) {
-            uint32_t value = irResults.value;
-            uint8_t cmd = (value >> 24) & 0xFF;
-            uint8_t playerId = (value >> 16) & 0xFF;
-            if (cmd == CMD_MATCH_REQ && playerId == 0) {
-                currentPhase = PHASE_RESULT;
-                if (mainLabel) {
-                    lv_label_set_text(mainLabel, "It's Match");
-                }
-                irMatchedShown = true;
-            }
-        }
-        irrecv.resume();
-    }
+    // IR 訊號由通訊模組處理（此處不直接存取 IRremote 以避免多重定義）
     
     // 檢查觸控狀態變化
+    #if TOUCH_ENABLED
     bool currentTouchState = touch.available();
     if (currentTouchState && !lastTouchState) {
-        // 觸控按下 - 先檢查滑動，再處理點擊
         handleSwipe();
-        
-        // 如果沒有滑動手勢，處理點擊
         if (touch.data.gestureID == SINGLE_CLICK) {
             handleTouch();
         }
     }
     lastTouchState = currentTouchState;
+    #endif
     
     // 定期更新顯示（只在需要時）
     static unsigned long lastDisplayUpdate = 0;

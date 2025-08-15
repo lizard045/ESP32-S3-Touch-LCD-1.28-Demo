@@ -2,16 +2,23 @@
 #define IRCOMMUNICATION_H
 
 #include <Arduino.h>
+#include "Config.h"
 
 // 前向宣告，避免在標頭檔中包含IRremote.h
 class IRrecv;
 class IRsend;
 struct decode_results;
 
-// 紅外線通訊相關常數
-#define IR_SEND_PIN     15    // GPIO15 - 紅外線發射腳
-#define IR_RECV_PIN     16    // GPIO16 - 紅外線接收腳 (VS1838B)
-#define IR_LED_PIN      17    // GPIO17 - 狀態指示LED
+// 紅外線通訊相關常數（與 Config.h 同步）
+#ifndef IR_SEND_PIN
+#define IR_SEND_PIN     15
+#endif
+#ifndef IR_RECV_PIN
+#define IR_RECV_PIN     7
+#endif
+#ifndef IR_LED_PIN
+#define IR_LED_PIN      17
+#endif
 
 // 通訊協定定義
 #define IR_ADDRESS      0x1234  // 固定位址

@@ -9,16 +9,19 @@
 #define SCREEN_HEIGHT    240
 #define SCREEN_ROTATION  0
 
-// 觸控設定 (使用內建I2C，這些腳位是固定的)
-#define TOUCH_SDA        6   // 內建I2C SDA
-#define TOUCH_SCL        7   // 內建I2C SCL  
-#define TOUCH_RST        13  // 內建觸控RST
-#define TOUCH_IRQ        5   // 內建觸控IRQ
+// 觸控設定（依你提供的最新接線）
+#define TOUCH_SDA        16  // tp_sda - 16
+#define TOUCH_SCL        21  // 建議改用 GPIO21，避免與 USB D+ (GPIO20) 衝突
+#define TOUCH_IRQ        13  // tp-int - 13
+#define TOUCH_RST        18  // tp-rst - 18
+
+// 是否啟用觸控（疑難排解時可暫時關閉以排除中斷/I2C 造成的崩潰）
+#define TOUCH_ENABLED     0
 
 // 紅外線設定 (使用可用的GPIO)
-#define IR_SEND_PIN      15  // GPIO15 - 紅外線發射
-#define IR_RECV_PIN      16  // GPIO16 - 紅外線接收
-#define IR_LED_PIN       17  // GPIO17 - 狀態指示LED
+#define IR_SEND_PIN      15  // GPIO15 - 紅外線發射（如需調整請告訴我）
+#define IR_RECV_PIN      7   // recive out - 7（依你提供的更新）
+#define IR_LED_PIN       2   // 狀態指示LED（避免與 LCD_RST=17 衝突）
 
 // 電池監測 (使用ADC功能的GPIO)
 #define BATTERY_PIN      33  // GPIO33 - 支援ADC和觸控功能

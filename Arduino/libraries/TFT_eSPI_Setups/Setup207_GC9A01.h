@@ -13,14 +13,16 @@
 #define TFT_WIDTH  240
 #define TFT_HEIGHT 240
 
-#define TFT_MISO 12
-#define TFT_MOSI 11
-#define TFT_SCLK 10
-#define TFT_CS   9  // Chip select control pin
-#define TFT_DC   8  // Data Command control pin
-#define TFT_RST  14
-#define TFT_BL	2
-#define TFT_BACKLIGHT_ON HIGH
+// MISO 未使用（顯示器為寫入為主），避免與 SCLK 混用
+// #define TFT_MISO 12
+#define TFT_MOSI 11      // mosi - 11
+#define TFT_SCLK 12      // sclk - 12
+#define TFT_CS   10      // lcd_cs - 10
+#define TFT_DC   9       // lcd_dc - 9
+#define TFT_RST  17      // lcd_rst - 17
+// 背光接至 3.3V，無需程式控制
+//#define TFT_BL	2
+//#define TFT_BACKLIGHT_ON HIGH
 
 #define LOAD_GLCD   // Font 1. Original Adafruit 8 pixel font needs ~1820 bytes in FLASH
 #define LOAD_FONT2  // Font 2. Small 16 pixel high font, needs ~3534 bytes in FLASH, 96 characters
@@ -32,4 +34,4 @@
 
 #define SMOOTH_FONT
 
-#define SPI_FREQUENCY  80000000
+#define SPI_FREQUENCY  40000000
