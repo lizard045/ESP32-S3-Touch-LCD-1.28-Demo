@@ -62,6 +62,7 @@ static uint32_t encodeMessage(uint8_t command, uint8_t playerId, uint16_t extra)
   m |= (uint32_t)extra;
   return m;
 }
+static const uint8_t IR_SEND_DELAY_MS = 40;
 
 static void sendCommand(IRCommand cmd, uint16_t extra = 0) {
   // 採用兩封包方案（NEC 32位）：
@@ -71,15 +72,17 @@ static void sendCommand(IRCommand cmd, uint16_t extra = 0) {
     uint8_t c = (uint8_t)CMD_MATCH_REQ;
     uint32_t frame1 = ((uint32_t)address16 << 16) | ((uint32_t)c << 8) | ((uint32_t)(~c) & 0xFF);
     irsend.sendNEC(frame1, 32, 0);
-    delay(30);
+    delay(IR_SEND_DELAY_MS);
     // 封包2：以 1-byte 資料（targetId 或 extra 低 8 位）放在 command 欄位
     uint8_t d = (uint8_t)(extra & 0xFF);
     uint32_t frame2 = ((uint32_t)address16 << 16) | ((uint32_t)d << 8) | ((uint32_t)(~d) & 0xFF);
     irsend.sendNEC(frame2, 32, 0);
+    delay(IR_SEND_DELAY_MS);
   } else {
     uint8_t c = (uint8_t)cmd;
     uint32_t frame = ((uint32_t)address16 << 16) | ((uint32_t)c << 8) | ((uint32_t)(~c) & 0xFF);
     irsend.sendNEC(frame, 32, 0);
+    delay(IR_SEND_DELAY_MS);
   }
 }
 
