@@ -84,6 +84,9 @@ private:
     uint8_t pendingSenderId;
     uint32_t pendingReqTime;
     
+    // 錯誤訊號連擊計數：連續兩次錯誤才累加一次 CR
+    uint8_t wrongStreak;
+    
     // 私有方法
     void initHardware();
     void sendRawCommand(uint8_t command, uint8_t playerId, uint16_t data = 0);
@@ -99,6 +102,10 @@ private:
     void enqueueMessage(const IRMessage& message);
     bool dequeueMessage(IRMessage& message);
     void clearQueue();
+    
+    // 錯誤/正確信號處理
+    void recordWrongSignal();
+    void resetWrongStreak();
 
 public:
     IRCommunication(int send_pin = IR_SEND_PIN, int recv_pin = IR_RECV_PIN, int led_pin = IR_LED_PIN);

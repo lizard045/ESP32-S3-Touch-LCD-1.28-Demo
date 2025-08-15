@@ -26,6 +26,8 @@ IRCommunication::IRCommunication(int send_pin, int recv_pin, int led_pin) {
     pendingMatchReq = false;
     pendingSenderId = 0;
     pendingReqTime = 0;
+    // 錯誤連擊計數
+    wrongStreak = 0;
 }
 
 IRCommunication::~IRCommunication() {
@@ -161,7 +163,8 @@ bool IRCommunication::receiveMessage(IRMessage& message) {
     // 僅處理 NEC，其他協議僅輸出除錯訊息並作為「錯誤配對」處理
     if (results.decode_type != decode_type_t::NEC) {
         irrecv->resume();
-        dataManager.processWrongMatch();
+        // 記錄一次錯誤訊號（非 NEC 視為錯誤）
+        recordWrongSignal();
         return false;
     }
     uint32_t v = (uint32_t)results.value;
@@ -236,6 +239,8 @@ void IRCommunication::processMessage(const IRMessage& message) {
             // 回應握手
             sendPlayerID(myPlayerId);
             currentState = STATE_CONNECTING;
+            // 非錯誤事件，重置錯誤連擊
+            resetWrongStreak();
             break;
             
         case CMD_PLAYER_ID:
@@ -244,6 +249,8 @@ void IRCommunication::processMessage(const IRMessage& message) {
                 currentState = STATE_CONNECTED;
                 Serial.print("與玩家連接: ");
                 Serial.println(targetPlayerId);
+                // 非錯誤事件，重置錯誤連擊
+                resetWrongStreak();
             }
             break;
             
@@ -253,11 +260,13 @@ void IRCommunication::processMessage(const IRMessage& message) {
                 // 正確的配對（玩家0）
                 sendMatchResponse(true);
                 Serial.println("配對成功! (匹配玩家0)");
+                // 成功配對重置錯誤連擊
+                resetWrongStreak();
             } else {
                 // 錯誤的配對：累加錯誤次數並解鎖一個特徵
                 sendMatchResponse(false);
                 Serial.println("配對失敗! (非玩家0)");
-                dataManager.processWrongMatch();
+                recordWrongSignal();
             }
             break;
             
@@ -265,6 +274,7 @@ void IRCommunication::processMessage(const IRMessage& message) {
             if (currentState == STATE_MATCHING) {
                 currentState = STATE_CONNECTED;
                 Serial.println("對方確認配對成功!");
+                resetWrongStreak();
             }
             break;
             
@@ -272,12 +282,15 @@ void IRCommunication::processMessage(const IRMessage& message) {
             if (currentState == STATE_MATCHING) {
                 currentState = STATE_CONNECTED;
                 Serial.println("對方回應配對失敗!");
+                // 收到失敗可視需要是否計入錯誤連擊，這裡視為非錯誤來源訊號，重置
+                resetWrongStreak();
             }
             break;
             
         case CMD_HEARTBEAT:
             // 更新最後接收時間
             lastReceiveTime = millis();
+            resetWrongStreak();
             break;
             
         case CMD_RESET:
@@ -352,6 +365,7 @@ void IRCommunication::reset() {
     currentState = STATE_IDLE;
     targetPlayerId = 0;
     clearQueue();
+    wrongStreak = 0;
     
     Serial.println("IR通訊重置");
 }
@@ -464,6 +478,27 @@ void IRCommunication::clearQueue() {
     queueHead = 0;
     queueTail = 0;
     queueCount = 0;
+}
+
+// 錯誤/正確信號處理
+void IRCommunication::recordWrongSignal() {
+    // 只在掃描/配對等互動階段計數，其他狀態也允許計數以簡化邏輯
+    wrongStreak = (uint8_t)min<int>(wrongStreak + 1, 255);
+    Serial.print("[IR] Wrong signal streak = ");
+    Serial.println(wrongStreak);
+    if (wrongStreak >= 2) {
+        // 達到兩次錯誤，觸發一次 UI 解鎖並重置計數
+        dataManager.processWrongMatch();
+        Serial.println("[IR] Two consecutive wrong signals -> CR +1");
+        wrongStreak = 0;
+    }
+}
+
+void IRCommunication::resetWrongStreak() {
+    if (wrongStreak != 0) {
+        Serial.println("[IR] Reset wrong signal streak");
+    }
+    wrongStreak = 0;
 }
 
 void IRCommunication::printMessage(const IRMessage& message) {
