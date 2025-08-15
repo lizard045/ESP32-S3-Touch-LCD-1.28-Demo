@@ -1,5 +1,16 @@
 #include "IRCommunication.h"
+
+// 確保 IRremote 啟用 NEC 協定（發送與接收）
+#ifndef DECODE_NEC
+#define DECODE_NEC
+#endif
+#ifndef SEND_NEC
+#define SEND_NEC
+#endif
 #include <IRremote.h>
+#include "PartnerData.h"
+
+extern PartnerDataManager dataManager;
 
 // IRremote 3.9.0 相容性定義
 #ifndef NEC
@@ -136,10 +147,14 @@ bool IRCommunication::sendHeartbeat() {
 }
 
 void IRCommunication::sendRawCommand(uint8_t command, uint8_t playerId, uint16_t data) {
-    if (!irSender) return;
-    
+    if (!irSender) return; 
     uint32_t message = encodeMessage(command, playerId, data);
-    irSender->sendNEC(IR_ADDRESS, message, 0);  // IRremote 3.9.0: 0 = 不重複
+#if defined(IRREMOTE_VERSION_MAJOR) && (IRREMOTE_VERSION_MAJOR < 4)
+    uint32_t raw = ((uint32_t)IR_ADDRESS << 16) | (message & 0xFFFF);
+    irSender->sendNEC(raw, 32);  // 舊版 IRremote 使用 32 位元資料
+#else
+    irSender->sendNEC(IR_ADDRESS, static_cast<uint8_t>(message & 0xFF), 0);  // 新版 IRremote
+#endif
     
     lastSendTime = millis();
     updateLED();
@@ -150,21 +165,27 @@ void IRCommunication::sendRawCommand(uint8_t command, uint8_t playerId, uint16_t
 bool IRCommunication::receiveMessage(IRMessage& message) {
     if (!irReceiver) return false;
     
-    if (irReceiver->decode(results)) {
-        if (results->decode_type == NEC && results->address == IR_ADDRESS) {
-            if (decodeMessage(results->value, message)) {
-                message.timestamp = millis();
-                message.isValid = true;
-                lastReceiveTime = millis();
-                
-                irReceiver->resume(); // 準備接收下一個訊息
-                return true;
-            }
-        }
-        irReceiver->resume();
-    }
     
-    return false;
+    // 嘗試解碼任何收到的訊號
+    if (!irReceiver->decode(results)) {
+        // decode() 失敗視為未知訊號
+        dataManager.processWrongMatch();
+        return false;
+    }
+
+    bool ok = decodeMessage(results->value, message);
+    irReceiver->resume(); // 準備接收下一個訊息
+
+    if (results->decode_type == UNKNOWN || !ok) {
+        // 未知協定或無法解析的訊號
+        dataManager.processWrongMatch();
+        return false;
+    }
+
+    message.timestamp = millis();
+    message.isValid = true;
+    lastReceiveTime = millis();
+    return true;
 }
 
 void IRCommunication::update() {
@@ -216,9 +237,10 @@ void IRCommunication::processMessage(const IRMessage& message) {
                 sendMatchResponse(true);
                 Serial.println("配對成功!");
             } else {
-                // 錯誤的配對
+                // 錯誤的配對:累加錯誤次數
                 sendMatchResponse(false);
                 Serial.println("配對失敗!");
+                dataManager.processWrongMatch();
             }
             break;
             

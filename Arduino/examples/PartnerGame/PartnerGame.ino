@@ -19,6 +19,7 @@
 
 // 自定義程式庫
 #include "PartnerData.h"
+#include "IRCommunication.h"
 
 #define LVGL_TICK_PERIOD_MS 2
 
@@ -42,17 +43,9 @@ CST816S touch(TOUCH_SDA, TOUCH_SCL, TOUCH_RST, TOUCH_IRQ);  // 與 Config.h 同�
 // 遊戲管理器
 PartnerDataManager dataManager;
 
-// 紅外線接收設定（與傳輸端一致）
-// IR 通訊邏輯由 `IRCommunication.cpp` 處理，這裡不再直接引用 IRremote，避免多重定義
-enum IRCommand : uint8_t {
-    CMD_HANDSHAKE  = 0x01,
-    CMD_PLAYER_ID  = 0x02,
-    CMD_MATCH_REQ  = 0x03,
-    CMD_MATCH_ACK  = 0x04,
-    CMD_MATCH_FAIL = 0x05,
-    CMD_HEARTBEAT  = 0x06,
-    CMD_RESET      = 0x07
-};
+// 紅外線通訊
+IRCommunication irComm;
+
 static bool irMatchedShown = false;
 
 // 遊戲狀態
@@ -311,6 +304,7 @@ void setup() {
     // 開始遊戲（確保 currentPlayerId 合法）
     currentPlayerId = 0;
     dataManager.startGame(currentPlayerId, currentPlayerId);
+    irComm.begin(currentPlayerId);
     
     // 創建 UI 元素
     // CR計數器在上方置中
@@ -358,6 +352,7 @@ void loop() {
         lastTickMs = nowMs;
     }
     lv_timer_handler();
+    irComm.update();
 
     // IR 訊號由通訊模組處理（此處不直接存取 IRremote 以避免多重定義）
     
