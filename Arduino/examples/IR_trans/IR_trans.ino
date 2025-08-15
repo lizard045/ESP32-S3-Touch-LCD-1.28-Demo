@@ -49,7 +49,7 @@ enum IRCommand : uint8_t {
 static uint8_t g_myPlayerId = 0;  // 單機發射端固定 ID
 
 // 傳送節奏與測試控制
-static uint32_t sendIntervalMs = 3000;
+static uint32_t sendIntervalMs = 5000;
 static unsigned long lastSendMs = 0;
 static uint32_t sendCount = 0;
 static bool carrierTestMode = false;  // 序列埠輸入 'c' 切換

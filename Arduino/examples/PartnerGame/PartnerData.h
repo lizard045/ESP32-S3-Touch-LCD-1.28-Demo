@@ -35,6 +35,8 @@ private:
     PartnerInfo players[10];  // 最多10個玩家
     int playerCount;
     GameState gameState;
+    // 最近一次解鎖的特徵索引（-1 表示無）
+    int lastUnlockedTraitIndex;
     
     // 特徵名稱對應 (暫時使用英文測試)
     const String traitNames[10] = {
@@ -63,6 +65,7 @@ public:
     bool checkMatch(int playerId1, int playerId2);
     void processWrongMatch();
     void revealRandomTrait();
+    int getLastUnlockedTraitIndex();
     
     // 解鎖特徵相關
     int getUnlockedTraitCount();

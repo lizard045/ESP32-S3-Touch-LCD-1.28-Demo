@@ -3,6 +3,7 @@
 PartnerDataManager::PartnerDataManager() {
     playerCount = 0;
     resetGame();
+    lastUnlockedTraitIndex = -1;
 }
 
 bool PartnerDataManager::loadFromCSV(const String& csvData) {
@@ -106,6 +107,7 @@ void PartnerDataManager::startGame(int currentPlayerId, int targetPlayerId) {
     gameState.gameActive = true;
     gameState.showResult = false;
     gameState.isMatch = false;
+    lastUnlockedTraitIndex = -1;
     
     initializeHiddenTraits();
 }
@@ -211,6 +213,7 @@ void PartnerDataManager::revealRandomTrait() {
         int randomIndex = random(0, hiddenCount);
         int traitToReveal = hiddenTraits[randomIndex];
         gameState.hiddenTraits[traitToReveal] = false;
+        lastUnlockedTraitIndex = traitToReveal;
     }
 }
 
@@ -251,6 +254,7 @@ void PartnerDataManager::resetGame() {
     gameState.gameActive = false;
     gameState.showResult = false;
     gameState.isMatch = false;
+    lastUnlockedTraitIndex = -1;
     
     for (int i = 0; i < 10; i++) {
         gameState.hiddenTraits[i] = false;
@@ -269,4 +273,8 @@ String PartnerDataManager::formatTraitForDisplay(int traitIndex, const String& v
     } else {
         return traitName + ":\n" + value;
     }
+}
+
+int PartnerDataManager::getLastUnlockedTraitIndex() {
+    return lastUnlockedTraitIndex;
 }

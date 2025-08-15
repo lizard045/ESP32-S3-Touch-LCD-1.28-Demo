@@ -65,6 +65,16 @@ static lv_obj_t* errorLine2 = nullptr;
 static bool errorXShowing = false;
 static unsigned long errorShownAt = 0;
 static const uint16_t errorDisplayMs = 1200;
+// Unlock +1 提示
+static lv_obj_t* unlockLabel = nullptr;
+static bool unlockShowing = false;
+static unsigned long unlockShownAt = 0;
+static const uint16_t unlockDisplayMs = 1000;
+
+// 失敗時 LED 提示（以 IR_LED_PIN 控制，維持 3 秒）
+static bool ledErrorOn = false;
+static unsigned long ledErrorSince = 0;
+static const uint16_t ledErrorDurationMs = 3000;
 
 // 測試CSV資料
 const String testCSV = 
@@ -177,6 +187,69 @@ void hideErrorX() {
     if (errorLine2) lv_obj_add_flag(errorLine2, LV_OBJ_FLAG_HIDDEN);
 }
 
+// 動畫回呼：透明度
+static void anim_set_opa_cb(void* obj, int32_t v) {
+    lv_obj_set_style_opa((lv_obj_t*)obj, (lv_opa_t)v, 0);
+}
+
+// 動畫回呼：縮放
+static void anim_set_zoom_cb(void* obj, int32_t v) {
+    lv_obj_set_style_transform_zoom((lv_obj_t*)obj, (lv_coord_t)v, 0);
+}
+
+// 顯示 Unlock +1 提示（淡入 + 輕微縮放）
+void showUnlockToast() {
+    if (!unlockLabel) {
+        // 建立在最上層圖層，避免被任何物件遮住
+        unlockLabel = lv_label_create(lv_layer_top());
+        lv_label_set_text(unlockLabel, "Unlock +1");
+        // 文字樣式
+        lv_obj_set_style_text_color(unlockLabel, lv_palette_main(LV_PALETTE_GREEN), 0);
+        lv_obj_set_style_text_font(unlockLabel, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_opa(unlockLabel, 255, 0);
+        // 半透明黑底與圓角，增加可讀性
+        lv_obj_set_style_bg_color(unlockLabel, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(unlockLabel, 128, 0);
+        lv_obj_set_style_radius(unlockLabel, 8, 0);
+        lv_obj_set_style_pad_all(unlockLabel, 8, 0);
+        // 位置稍微高於中心，避免與大 X 完全重疊
+        lv_obj_align(unlockLabel, LV_ALIGN_CENTER, 0, -60);
+        // 置於最前景
+        lv_obj_move_foreground(unlockLabel);
+    }
+    lv_obj_clear_flag(unlockLabel, LV_OBJ_FLAG_HIDDEN);
+    // 初始狀態：透明且 100% 縮放
+    lv_obj_set_style_opa(unlockLabel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_transform_zoom(unlockLabel, 256, 0); // 256 = 原始大小
+
+    // 透明度動畫：0 -> 255
+    lv_anim_t a_opa;
+    lv_anim_init(&a_opa);
+    lv_anim_set_var(&a_opa, unlockLabel);
+    lv_anim_set_exec_cb(&a_opa, anim_set_opa_cb);
+    lv_anim_set_values(&a_opa, 0, 255);
+    lv_anim_set_time(&a_opa, 250);
+    lv_anim_set_path_cb(&a_opa, lv_anim_path_ease_out);
+    lv_anim_start(&a_opa);
+
+    // 縮放動畫：256 -> 320（約 125%）
+    lv_anim_t a_zoom;
+    lv_anim_init(&a_zoom);
+    lv_anim_set_var(&a_zoom, unlockLabel);
+    lv_anim_set_exec_cb(&a_zoom, anim_set_zoom_cb);
+    lv_anim_set_values(&a_zoom, 256, 320);
+    lv_anim_set_time(&a_zoom, 300);
+    lv_anim_set_path_cb(&a_zoom, lv_anim_path_ease_out);
+    lv_anim_start(&a_zoom);
+
+    // 後備：若未啟用動畫，仍確保可見
+    lv_obj_set_style_opa(unlockLabel, 255, 0);
+    lv_obj_move_foreground(unlockLabel);
+
+    unlockShowing = true;
+    unlockShownAt = millis();
+}
+
 // 處理滑動切換特徵
 void handleSwipe() {
     static unsigned long lastSwipeTime = 0;
@@ -251,7 +324,7 @@ void handleTouch() {
                     irComm.stopScanning();
                     currentPhase = PHASE_RESULT;
                     if (mainLabel) {
-                        lv_label_set_text(mainLabel, "GAME OVER\n\nTry Again!");
+                        lv_label_set_text(mainLabel, "PLEASE LEAVE~\n\nTry Again!");
                     }
                     lastUpdate = now;
                 } else {
@@ -314,6 +387,12 @@ void setup() {
     Serial.println("Touch init OK");
     #else
     Serial.println("Touch disabled");
+    #endif
+    
+    // LED 腳位初始化（若 IR_LED_PIN 可用）
+    #ifdef IR_LED_PIN
+    pinMode(IR_LED_PIN, OUTPUT);
+    digitalWrite(IR_LED_PIN, LOW);
     #endif
     
     // 初始化 LVGL 顯示緩衝區
@@ -423,6 +502,13 @@ void loop() {
         Serial.println("[UI] Two wrong signals -> show big X");
         irComm.stopScanning();
         showErrorX();
+        showUnlockToast();
+        // 亮起外接 LED 3 秒（紅色代表錯誤）
+        #ifdef IR_LED_PIN
+        digitalWrite(IR_LED_PIN, HIGH);
+        ledErrorOn = true;
+        ledErrorSince = millis();
+        #endif
         // 暫時進入結果狀態，用於覆蓋顯示
         currentPhase = PHASE_RESULT;
         lastUpdate = millis();
@@ -450,19 +536,38 @@ void loop() {
         lastDisplayUpdate = now;
     }
     
+    // Unlock +1 提示自動隱藏
+    if (unlockShowing && (now - unlockShownAt > unlockDisplayMs)) {
+        if (unlockLabel) lv_obj_add_flag(unlockLabel, LV_OBJ_FLAG_HIDDEN);
+        unlockShowing = false;
+    }
+
+    // LED 錯誤提示自動關閉
+    #ifdef IR_LED_PIN
+    if (ledErrorOn && (now - ledErrorSince > ledErrorDurationMs)) {
+        digitalWrite(IR_LED_PIN, HIGH);
+        ledErrorOn = false;
+    }
+    #endif
+
     // 結果顯示自動返回
     if (currentPhase == PHASE_RESULT && errorXShowing && (now - errorShownAt > errorDisplayMs)) {
         // 大 X 展示完畢，根據遊戲狀態決定下一步
         hideErrorX();
         errorXShowing = false;
         if (dataManager.isGameOver()) {
-            Serial.println("[UI] Game Over after wrong signals");
+            Serial.println("[UI] Please leave after wrong signals");
             if (mainLabel) {
-                lv_label_set_text(mainLabel, "GAME OVER\n\nTry Again!");
+                lv_label_set_text(mainLabel, "PLEASE LEAVE~\n\nTry Again!");
             }
             lastUpdate = now;
             // 保持在 PHASE_RESULT，交由原本的自動重啟計時處理
         } else {
+            // 跳轉到剛解鎖的特徵索引
+            int justUnlocked = dataManager.getLastUnlockedTraitIndex();
+            if (justUnlocked >= 0 && justUnlocked < 10) {
+                currentTraitIndex = justUnlocked;
+            }
             currentPhase = PHASE_DISPLAYING;
             updateDisplay();
         }
