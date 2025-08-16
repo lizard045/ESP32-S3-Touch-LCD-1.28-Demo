@@ -399,12 +399,18 @@ void handleTouch() {
                 // 結束 IR 掃描
                 irComm.stopScanning();
                 currentPhase = PHASE_RESULT;
+#ifdef LED_PIN
+                setStatusLed(0, 255, 0);
+#endif
                 if (mainLabel) {
                     lv_label_set_text(mainLabel, "MATCH!\n\nCongratulations!");
                 }
                 lastUpdate = now;
             } else {
                 Serial.println("Match failed, unlock new trait");
+#ifdef LED_PIN
+                setStatusLed(255, 0, 0);
+#endif
                 dataManager.processWrongMatch();
                 
                 if (dataManager.isGameOver()) {
