@@ -59,6 +59,7 @@ static unsigned long lastUpdate = 0;
 // LVGL 物件
 static lv_obj_t* mainLabel = nullptr;
 static lv_obj_t* statusLabel = nullptr;
+static lv_obj_t* crArc = nullptr;
 // 錯誤大 X 覆蓋層（使用兩條紅色對角線）
 static lv_obj_t* errorLine1 = nullptr;
 static lv_obj_t* errorLine2 = nullptr;
@@ -146,6 +147,9 @@ void updateDisplay() {
             lv_label_set_text(statusLabel, status.c_str());
             lastStatus = status;
         }
+    }   
+    if (crArc && total > 0) {
+        lv_arc_set_value(crArc, unlocked * 100 / total);
     }
 }
 
@@ -195,6 +199,14 @@ static void anim_set_opa_cb(void* obj, int32_t v) {
 // 動畫回呼：縮放
 static void anim_set_zoom_cb(void* obj, int32_t v) {
     lv_obj_set_style_transform_zoom((lv_obj_t*)obj, (lv_coord_t)v, 0);
+}
+// 動畫回呼：圓弧值
+static void arc_set_value_cb(void* obj, int32_t v) {
+    lv_arc_set_value((lv_obj_t*)obj, v);
+}
+// 動畫完成時刪除圓弧
+static void arc_anim_ready_cb(lv_anim_t* a) {
+    lv_obj_del((lv_obj_t*)a->var);
 }
 
 // 顯示 Unlock +1 提示（淡入 + 輕微縮放）
@@ -249,6 +261,58 @@ void showUnlockToast() {
     unlockShowing = true;
     unlockShownAt = millis();
 }
+// 顯示配對成功動畫
+void showMatchSuccess() {
+    if (!mainLabel) return;
+
+    // 標題顯示與顏色
+    lv_label_set_text(mainLabel, "It's Match !");
+    lv_obj_set_style_text_color(mainLabel, lv_palette_main(LV_PALETTE_GREEN), 0);
+
+    // 初始透明與縮放設定
+    lv_obj_set_style_opa(mainLabel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_transform_zoom(mainLabel, 180, 0);
+
+    // 文字淡入
+    lv_anim_t a_opa;
+    lv_anim_init(&a_opa);
+    lv_anim_set_var(&a_opa, mainLabel);
+    lv_anim_set_exec_cb(&a_opa, anim_set_opa_cb);
+    lv_anim_set_values(&a_opa, 0, 255);
+    lv_anim_set_time(&a_opa, 400);
+    lv_anim_start(&a_opa);
+
+    // 文字放大
+    lv_anim_t a_zoom;
+    lv_anim_init(&a_zoom);
+    lv_anim_set_var(&a_zoom, mainLabel);
+    lv_anim_set_exec_cb(&a_zoom, anim_set_zoom_cb);
+    lv_anim_set_values(&a_zoom, 180, 256);
+    lv_anim_set_time(&a_zoom, 400);
+    lv_anim_start(&a_zoom);
+
+    // 中央圓弧動畫
+    lv_obj_t* arc = lv_arc_create(lv_scr_act());
+    lv_obj_set_size(arc, 190, 190);
+    lv_obj_align(arc, LV_ALIGN_CENTER, 0, 0);
+    lv_arc_set_rotation(arc, 270);
+    lv_arc_set_bg_angles(arc, 0, 360);
+    lv_arc_set_range(arc, 0, 100);
+    lv_arc_set_value(arc, 0);
+    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+    lv_obj_set_style_arc_width(arc, 8, 0);
+    lv_obj_set_style_arc_color(arc, lv_palette_main(LV_PALETTE_GREEN), 0);
+
+    lv_anim_t a_arc;
+    lv_anim_init(&a_arc);
+    lv_anim_set_var(&a_arc, arc);
+    lv_anim_set_exec_cb(&a_arc, arc_set_value_cb);
+    lv_anim_set_values(&a_arc, 0, 100);
+    lv_anim_set_time(&a_arc, 700);
+    lv_anim_set_ready_cb(&a_arc, arc_anim_ready_cb);
+    lv_anim_start(&a_arc);
+}
+
 
 // 處理滑動切換特徵
 void handleSwipe() {
@@ -437,10 +501,22 @@ void setup() {
     // 創建 UI 元素
     // CR計數器在上方置中
     statusLabel = lv_label_create(lv_scr_act());
-    lv_obj_set_width(statusLabel, screenWidth - 20);
+    lv_obj_set_width(statusLabel, screenWidth - 80);
     lv_label_set_long_mode(statusLabel, LV_LABEL_LONG_WRAP);
     lv_obj_align(statusLabel, LV_ALIGN_TOP_MID, 0, 10);
     lv_obj_set_style_text_align(statusLabel, LV_TEXT_ALIGN_CENTER, 0);
+
+    // CR 進度圓弧
+    crArc = lv_arc_create(lv_scr_act());
+    lv_obj_set_size(crArc, 40, 40);
+    lv_arc_set_rotation(crArc, 270);
+    lv_arc_set_bg_angles(crArc, 0, 360);
+    lv_arc_set_range(crArc, 0, 100);
+    lv_arc_set_value(crArc, 0);
+    lv_obj_remove_style(crArc, NULL, LV_PART_KNOB);
+    lv_obj_set_style_arc_width(crArc, 6, 0);
+    lv_obj_set_style_arc_color(crArc, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_align(crArc, LV_ALIGN_TOP_LEFT, 10, 10);
     
     // 主要內容置中顯示
     mainLabel = lv_label_create(lv_scr_act());
@@ -491,9 +567,8 @@ void loop() {
                 irComm.stopScanning();
                 currentPhase = PHASE_RESULT;
                 Serial.println("[UI] Show: It's Match ! (NEC received)");
-                if (mainLabel) {
-                    lv_label_set_text(mainLabel, "It's Match !");
-                }
+                showMatchSuccess();
+
                 irMatchedShown = true;
                 lastUpdate = millis();
             }

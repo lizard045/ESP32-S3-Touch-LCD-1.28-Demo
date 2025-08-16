@@ -31,7 +31,7 @@
 // 紅外線設定 (使用可用的GPIO)
 #define IR_SEND_PIN      15  // 紅外線發射（未變更）
 #define IR_RECV_PIN      7   // Receiver out - 7
-#define IR_LED_PIN       5   // LED DIN - 5（狀態指示/外接LED）
+#define LED_PIN          6   // LED DIN - 6（狀態指示/外接LED）
 
 // 電池監測 (使用ADC功能的GPIO)
 #define BATTERY_PIN      33  // GPIO33 - 支援ADC和觸控功能
