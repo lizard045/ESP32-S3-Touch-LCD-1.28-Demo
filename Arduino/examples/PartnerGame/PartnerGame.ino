@@ -17,6 +17,11 @@
 #include "CST816S.h"
 #include "Config.h"
 
+#ifdef LED_PIN
+#include <Adafruit_NeoPixel.h>
+#endif
+
+
 // 自定義程式庫
 #include "PartnerData.h"
 #include "IRCommunication.h"
@@ -35,6 +40,10 @@ static lv_color_t buf[screenWidth * screenHeight / 10];
 // 腳位統一由 Config.h 提供
 Adafruit_GC9A01A tft(LCD_CS_PIN, LCD_DC_PIN, LCD_MOSI_PIN, LCD_SCLK_PIN, LCD_RST_PIN);
 CST816S touch(TOUCH_SDA, TOUCH_SCL, TOUCH_RST, TOUCH_IRQ);  // 與 Config.h 同步
+
+#ifdef LED_PIN
+Adafruit_NeoPixel statusLed(1, LED_PIN, NEO_GRB + NEO_KHZ800);
+#endif
 
 // 遊戲管理器
 PartnerDataManager dataManager;
@@ -72,10 +81,25 @@ static bool unlockShowing = false;
 static unsigned long unlockShownAt = 0;
 static const uint16_t unlockDisplayMs = 1000;
 
-// 失敗時 LED 提示（以 IR_LED_PIN 控制，維持 3 秒）
-static bool ledErrorOn = false;
-static unsigned long ledErrorSince = 0;
-static const uint16_t ledErrorDurationMs = 3000;
+// 配對結果 LED 提示（使用 LED_PIN 控制，5 秒後變暗）
+#ifdef LED_PIN
+static bool statusLedOn = false;
+static unsigned long statusLedSince = 0;
+static uint32_t statusLedColor = 0;
+static const uint16_t statusLedDimDelayMs = 5000;
+#endif
+
+// 設定狀態 LED 顏色並啟動計時
+#ifdef LED_PIN
+void setStatusLed(uint8_t r, uint8_t g, uint8_t b) {
+    statusLed.setBrightness(255);
+    statusLedColor = statusLed.Color(r, g, b);
+    statusLed.setPixelColor(0, statusLedColor);
+    statusLed.show();
+    statusLedOn = true;
+    statusLedSince = millis();
+}
+#endif
 
 // 測試CSV資料
 const String testCSV = 
@@ -453,10 +477,11 @@ void setup() {
     Serial.println("Touch disabled");
     #endif
     
-    // LED 腳位初始化（若 IR_LED_PIN 可用）
-    #ifdef IR_LED_PIN
-    pinMode(IR_LED_PIN, OUTPUT);
-    digitalWrite(IR_LED_PIN, LOW);
+    // LED 初始化
+    #ifdef LED_PIN
+    statusLed.begin();
+    statusLed.clear();
+    statusLed.show();
     #endif
     
     // 初始化 LVGL 顯示緩衝區
@@ -581,11 +606,9 @@ void loop() {
         irComm.stopScanning();
         showErrorX();
         showUnlockToast();
-        // 亮起外接 LED 3 秒（紅色代表錯誤）
-        #ifdef IR_LED_PIN
-        digitalWrite(IR_LED_PIN, HIGH);
-        ledErrorOn = true;
-        ledErrorSince = millis();
+        // 顯示紅色錯誤提示 LED
+        #ifdef LED_PIN
+        setStatusLed(255, 0, 0);
         #endif
         // 暫時進入結果狀態，用於覆蓋顯示
         currentPhase = PHASE_RESULT;
@@ -620,11 +643,13 @@ void loop() {
         unlockShowing = false;
     }
 
-    // LED 錯誤提示自動關閉
-    #ifdef IR_LED_PIN
-    if (ledErrorOn && (now - ledErrorSince > ledErrorDurationMs)) {
-        digitalWrite(IR_LED_PIN, HIGH);
-        ledErrorOn = false;
+    // LED 提示自動變暗
+    #ifdef LED_PIN
+    if (statusLedOn && (now - statusLedSince > statusLedDimDelayMs)) {
+        statusLed.setBrightness(10);
+        statusLed.setPixelColor(0, statusLedColor);
+        statusLed.show();
+        statusLedOn = false;
     }
     #endif
 

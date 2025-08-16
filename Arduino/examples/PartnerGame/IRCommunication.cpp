@@ -4,6 +4,11 @@
 
 extern PartnerDataManager dataManager;
 
+#ifdef LED_PIN
+extern void setStatusLed(uint8_t r, uint8_t g, uint8_t b);
+#endif
+
+
 IRCommunication::IRCommunication(int send_pin, int recv_pin, int led_pin) {
     m_sendPin = send_pin;
     m_recvPin = recv_pin;
@@ -34,6 +39,11 @@ IRCommunication::IRCommunication(int send_pin, int recv_pin, int led_pin) {
 
 IRCommunication::~IRCommunication() {
     end();
+    // 釋放動態配置的 IR 物件
+    delete irsend;
+    delete irrecv;
+    irsend = nullptr;
+    irrecv = nullptr;
 }
 
 bool IRCommunication::begin(uint8_t playerId) {
@@ -75,17 +85,12 @@ void IRCommunication::initHardware() {
     // 設置腳位
     pinMode(m_sendPin, OUTPUT);
     pinMode(m_recvPin, INPUT);
-    pinMode(m_ledPin, OUTPUT);
     
-    // 初始化LED
-    digitalWrite(m_ledPin, LOW);
     
     Serial.print("IR發射腳: GPIO");
     Serial.println(m_sendPin);
     Serial.print("IR接收腳: GPIO");
     Serial.println(m_recvPin);
-    Serial.print("狀態LED: GPIO");
-    Serial.println(m_ledPin);
 }
 
 bool IRCommunication::sendHandshake() {
@@ -268,6 +273,9 @@ void IRCommunication::processMessage(const IRMessage& message) {
                 // 錯誤的配對：累加錯誤次數並解鎖一個特徵
                 sendMatchResponse(false);
                 Serial.println("配對失敗! (非玩家0)");
+#ifdef LED_PIN
+                setStatusLed(255, 0, 0);
+#endif
                 recordWrongSignal();
             }
             break;
@@ -276,6 +284,9 @@ void IRCommunication::processMessage(const IRMessage& message) {
             if (currentState == STATE_MATCHING) {
                 currentState = STATE_CONNECTED;
                 Serial.println("對方確認配對成功!");
+#ifdef LED_PIN
+                setStatusLed(0, 255, 0);
+#endif
                 resetWrongStreak();
             }
             break;
@@ -284,6 +295,9 @@ void IRCommunication::processMessage(const IRMessage& message) {
             if (currentState == STATE_MATCHING) {
                 currentState = STATE_CONNECTED;
                 Serial.println("對方回應配對失敗!");
+#ifdef LED_PIN
+                setStatusLed(255, 0, 0);
+#endif
                 // 收到失敗可視需要是否計入錯誤連擊，這裡視為非錯誤來源訊號，重置
                 resetWrongStreak();
             }
@@ -397,40 +411,7 @@ bool IRCommunication::consumeWrongUnlockEvent() {
 }
 
 void IRCommunication::updateLED() {
-    static uint32_t lastBlink = 0;
-    static bool ledState = false;
-    
-    uint32_t now = millis();
-    
-    switch (currentState) {
-        case STATE_IDLE:
-            digitalWrite(m_ledPin, LOW);
-            break;
-            
-        case STATE_SCANNING:
-        case STATE_CONNECTING:
-        case STATE_MATCHING:
-            // 快速閃爍
-            if (now - lastBlink > 200) {
-                ledState = !ledState;
-                digitalWrite(m_ledPin, ledState);
-                lastBlink = now;
-            }
-            break;
-            
-        case STATE_CONNECTED:
-            digitalWrite(m_ledPin, HIGH);
-            break;
-            
-        case STATE_ERROR:
-            // 慢速閃爍
-            if (now - lastBlink > 1000) {
-                ledState = !ledState;
-                digitalWrite(m_ledPin, ledState);
-                lastBlink = now;
-            }
-            break;
-    }
+    // LED 指示改由主程式處理，這裡保留空實作避免干擾
 }
 
 bool IRCommunication::isTimeout(uint32_t startTime, uint32_t timeout) {

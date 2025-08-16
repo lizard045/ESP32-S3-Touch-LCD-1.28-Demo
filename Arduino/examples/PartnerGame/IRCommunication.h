@@ -16,9 +16,7 @@
 #ifndef IR_RECV_PIN
 #define IR_RECV_PIN     7
 #endif
-#ifndef IR_LED_PIN
-#define IR_LED_PIN      17
-#endif
+
 
 // 通訊協定定義
 #define IR_ADDRESS      0x1234  // 固定位址
@@ -110,7 +108,8 @@ private:
     volatile bool wrongUnlockEvent;
 
 public:
-    IRCommunication(int send_pin = IR_SEND_PIN, int recv_pin = IR_RECV_PIN, int led_pin = IR_LED_PIN);
+    IRCommunication(int send_pin = IR_SEND_PIN, int recv_pin = IR_RECV_PIN, int led_pin = LED_PIN);
+    // 在解構時釋放建立的 IR 物件，避免記憶體洩漏
     ~IRCommunication();
     
     // 初始化
